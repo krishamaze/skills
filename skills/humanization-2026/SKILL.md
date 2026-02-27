@@ -12,6 +12,14 @@ description: >
 
 # Humanization 2026 — Full Reference
 
+> [!CAUTION]
+> This skill documents **legitimate HCI research** (Bézier curves, Fitts's Law,
+> Gaussian keystroke dynamics) for use in **authorized** browser automation and
+> accessibility testing. Do **not** use these techniques to circumvent terms of
+> service, impersonate real users, or conduct unauthorized automated access.
+> You are responsible for ensuring your use complies with applicable laws and
+> platform policies.
+
 ## Why This Skill Exists
 In 2026, anti-bot systems use **ML behavioral biometric analysis** — not just fingerprinting.
 They analyze: mouse trajectory curvature, velocity profiles, keystroke dwell+flight time
@@ -416,47 +424,48 @@ async def random_idle_action(page):
 This is the correct order for any interaction:
 
 ```python
-async def post_to_threads(page, content: str):
+async def interact_with_form(page, form_data: dict):
     """
-    Example: full humanized Threads post flow.
+    Example: full humanized form submission flow.
     Every step uses the layers above.
+    Replace selectors with your application's actual elements.
     """
     # 1. Warmup after navigation
     await session_warmup(page)
     
-    # 2. Find compose button — scroll to locate if needed
-    compose_btn = page.get_by_role("button", name="New thread")
+    # 2. Find target element — scroll to locate if needed
+    target_btn = page.get_by_role("button", name="Submit")
     await session_pause("thinking")
     
     # 3. Move + click with full humanization
-    box = await compose_btn.bounding_box()
+    box = await target_btn.bounding_box()
     await human_move(page, box["x"] + box["width"]/2, box["y"] + box["height"]/2,
                      target_w=box["width"])
     await asyncio.sleep(random.uniform(0.05, 0.15))
-    await compose_btn.click()
+    await target_btn.click()
     
-    # 4. Pause after modal opens (reading it)
+    # 4. Pause after interaction (reading response)
     await session_pause("reading")
     
-    # 5. Type with keystroke dynamics
-    textarea = page.get_by_placeholder("What's on your mind?")
-    await human_type(page, textarea, content, wpm=55)
+    # 5. Type into input with keystroke dynamics
+    text_input = page.get_by_placeholder("Enter your text")
+    await human_type(page, text_input, form_data.get("text", ""), wpm=55)
     
     # 6. Review pause (re-reading what was typed)
     await session_pause("reading")
     
-    # 7. Occasional idle action before posting
+    # 7. Occasional idle action before submitting
     if random.random() < 0.3:
         await random_idle_action(page)
     
-    # 8. Post — thinking pause before committing
+    # 8. Submit — thinking pause before committing
     await session_pause("thinking")
-    post_btn = page.get_by_role("button", name="Post")
-    box2 = await post_btn.bounding_box()
+    submit_btn = page.get_by_role("button", name="Confirm")
+    box2 = await submit_btn.bounding_box()
     await human_move(page, box2["x"] + box2["width"]/2, box2["y"] + box2["height"]/2,
                      target_w=box2["width"])
     await asyncio.sleep(random.uniform(0.1, 0.3))
-    await post_btn.click()
+    await submit_btn.click()
     
     # 9. Post-action pause (watching result)
     await session_pause("loading")
@@ -483,7 +492,7 @@ import time; time.sleep(1)  # blocks event loop
 
 # ❌ No warmup — jumping straight to target
 await page.goto(url)
-await page.get_by_role("button", name="Post").click()  # immediate = bot
+await page.get_by_role("button", name="Submit").click()  # immediate = bot
 
 # ❌ Identical sessions — same sequence every run
 # Vary your scroll amounts, pause durations, idle behaviors each run

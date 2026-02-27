@@ -25,8 +25,8 @@ docker-compose up   # hyphenated — never use
 ```dockerfile
 FROM python:3.12-slim-bookworm
 
-# Copy uv from official image (no curl/install needed)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Copy uv from official image — always pin the version tag
+COPY --from=ghcr.io/astral-sh/uv:0.10.7 /uv /uvx /bin/
 
 WORKDIR /app
 
@@ -49,7 +49,7 @@ CMD ["python", "-m", "api.main"]
 ```dockerfile
 FROM python:3.12-slim-bookworm
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.10.7 /uv /uvx /bin/
 
 # System deps for Firefox + virtual display
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -66,6 +66,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Download Camoufox Firefox binary
+# ⚠️  Verify the expected version in pyproject.toml; camoufox fetch downloads
+#    a pre-built Firefox binary — pin the camoufox package version in uv.lock
+#    and validate the download hash when possible.
 RUN uv run python -m camoufox fetch
 
 COPY . .
@@ -123,7 +126,7 @@ services:
       - "127.0.0.1:3000:3000"
 
   nginx:
-    image: nginx:alpine
+    image: nginx:1.28.2-alpine3.23  # pin stable — never use bare :alpine/:latest
     container_name: threads-nginx
     restart: unless-stopped
     ports:
@@ -145,8 +148,13 @@ ports:
   - "8000:8000"  # exposes to all interfaces
 ```
 
+> [!CAUTION]
+> The commands below **modify host-level firewall rules** and require root
+> privileges. Never run them unattended in CI or automated scripts. Review
+> and execute manually on the target VPS only.
+
 ```bash
-# UFW rules on VPS
+# UFW rules on VPS (manual — requires human review)
 sudo ufw default deny incoming
 sudo ufw allow 22/tcp   # SSH
 sudo ufw allow 80/tcp   # HTTP

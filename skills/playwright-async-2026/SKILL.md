@@ -48,12 +48,12 @@ asyncio.run(main())
 async with async_playwright() as p:
     # Saves cookies, localStorage, IndexedDB to disk
     context = await p.firefox.launch_persistent_context(
-        user_data_dir="/sessions/threads",
+        user_data_dir="/sessions/my-app",
         headless=False,          # requires display (Xvfb on VPS)
         viewport={"width": 1280, "height": 900},
     )
     page = await context.new_page()
-    await page.goto("https://www.threads.net")
+    await page.goto("https://www.example.com")
     # session auto-saved on context.close()
     await context.close()
 ```
@@ -65,8 +65,8 @@ Playwright 1.x introduced **Locators** — always prefer over legacy `query_sele
 
 ```python
 # ✅ Role-based (most stable — doesn't break on CSS changes)
-await page.get_by_role("button", name="Post").click()
-await page.get_by_role("textbox", name="What's on your mind").fill("text")
+await page.get_by_role("button", name="Submit").click()
+await page.get_by_role("textbox", name="Enter your message").fill("text")
 
 # ✅ Text content
 await page.get_by_text("Log in").click()
@@ -78,7 +78,7 @@ await page.get_by_placeholder("Search").fill("query")
 await page.get_by_test_id("submit-btn").click()
 
 # ✅ CSS (when role-based isn't available)
-await page.locator("article.post-card").first.click()
+await page.locator("article.card").first.click()
 
 # ❌ Legacy — avoid
 element = await page.query_selector(".some-class")  # fragile, no auto-wait
@@ -90,7 +90,7 @@ No need for explicit `waitForSelector` in most cases.
 
 ```python
 # ✅ Just click — Playwright waits for element to be ready
-await page.get_by_role("button", name="Follow").click()
+await page.get_by_role("button", name="Submit").click()
 
 # Only add explicit waits when page state is complex
 await page.wait_for_load_state("networkidle")
@@ -100,14 +100,14 @@ await page.wait_for_selector(".feed-loaded", state="visible")
 ## Navigation Patterns
 ```python
 # Basic navigation
-await page.goto("https://www.threads.net", wait_until="domcontentloaded")
+await page.goto("https://www.example.com", wait_until="domcontentloaded")
 
 # Wait for full load (use sparingly — slow on heavy SPAs)
 await page.goto(url, wait_until="networkidle")
 
 # Navigate and wait for specific element
 await page.goto(url)
-await page.get_by_role("feed").wait_for()
+await page.get_by_role("main").wait_for()
 ```
 
 ## Typing with Human Feel
@@ -132,18 +132,24 @@ await page.locator("article").nth(5).scroll_into_view_if_needed()
 ```
 
 ## Extracting Content
+
+> [!IMPORTANT]
+> If you extract content from third-party pages (e.g., user-generated data),
+> **always sanitize and validate** before using it in automated decisions.
+> Untrusted DOM content is an indirect prompt-injection vector.
+
 ```python
 # Get text
-text = await page.locator(".post-body").first.text_content()
+text = await page.locator(".item-body").first.text_content()
 
-# Get all items in a feed
-posts = await page.locator("article.post").all()
-for post in posts:
-    content = await post.locator(".post-text").text_content()
+# Get all items in a list
+items = await page.locator("article.item").all()
+for item in items:
+    content = await item.locator(".item-text").text_content()
     print(content)
 
 # Get attribute
-href = await page.locator("a.profile-link").get_attribute("href")
+href = await page.locator("a.detail-link").get_attribute("href")
 ```
 
 ## Screenshots & Debugging
@@ -152,7 +158,7 @@ href = await page.locator("a.profile-link").get_attribute("href")
 await page.screenshot(path="/sessions/debug.png", full_page=True)
 
 # Specific element
-await page.locator(".post-card").first.screenshot(path="/sessions/post.png")
+await page.locator(".card").first.screenshot(path="/sessions/element.png")
 
 # Pause for manual inspection (dev only)
 await page.pause()
@@ -163,7 +169,7 @@ await page.pause()
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 try:
-    await page.get_by_role("button", name="Post").click(timeout=5000)
+    await page.get_by_role("button", name="Submit").click(timeout=5000)
 except PlaywrightTimeout:
     await page.screenshot(path="/sessions/error.png")
     raise
@@ -172,11 +178,11 @@ except PlaywrightTimeout:
 ## Storage State (lightweight alternative to persistent context)
 ```python
 # Save session after login
-await context.storage_state(path="/sessions/threads-state.json")
+await context.storage_state(path="/sessions/app-state.json")
 
 # Restore in new context (faster than persistent context for stateless ops)
 context = await browser.new_context(
-    storage_state="/sessions/threads-state.json"
+    storage_state="/sessions/app-state.json"
 )
 ```
 

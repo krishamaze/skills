@@ -21,11 +21,16 @@ uv is the **community consensus default** for new Python projects in 2026:
 ## Installation
 ```bash
 # On any Linux/Mac (VPS, Docker, CI)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# ⚠️  Always pin the version — never pipe an unpinned URL to sh.
+curl -LsSf https://astral.sh/uv/0.10.7/install.sh | sh
 
 # Verify
-uv --version
+uv --version   # expect 0.10.7
 ```
+
+> **Security note:** Review the uv [GitHub releases](https://github.com/astral-sh/uv/releases)
+> before bumping the pinned version. In CI, prefer downloading the binary and
+> verifying its SHA-256 checksum against the published release manifest.
 
 ## New Project Setup
 ```bash
@@ -94,8 +99,8 @@ uv python list
 ```dockerfile
 FROM python:3.12-slim-bookworm
 
-# Copy uv binary from official image (fastest method)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Copy uv binary from official image — always pin version, never use :latest
+COPY --from=ghcr.io/astral-sh/uv:0.10.7 /uv /uvx /bin/
 
 WORKDIR /app
 
@@ -118,6 +123,7 @@ CMD ["python", "-m", "app.main"]
 ```
 
 Key Docker rules:
+- **Pin the uv image tag** — never use `:latest`; for maximum safety use an immutable SHA digest (e.g., `ghcr.io/astral-sh/uv@sha256:<digest>`)
 - Always commit `uv.lock` to version control
 - Use `--frozen` in Docker/CI (never auto-resolve in production)
 - Use `--no-dev` in production containers

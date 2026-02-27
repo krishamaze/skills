@@ -35,8 +35,18 @@ uv add camoufox[geoip]
 uv add playwright
 
 # Download Camoufox's patched Firefox binary (one-time, ~300MB)
+# ⚠️  This fetches a pre-built binary from GitHub releases.
+#    Pin the camoufox version in pyproject.toml and verify the
+#    download hash before deploying to production.
 python -m camoufox fetch
 ```
+
+> [!WARNING]
+> `camoufox fetch` downloads a third-party patched Firefox binary.
+> Always pin the `camoufox` package version in `pyproject.toml` /
+> `uv.lock`, and verify provenance via the
+> [GitHub release checksums](https://github.com/daijro/camoufox/releases)
+> before use in production or CI.
 
 ## API: Two Modes
 
@@ -49,11 +59,11 @@ async def main():
     async with AsyncCamoufox(
         headless=False,           # False = uses virtual display (Xvfb)
         humanize=True,            # enables human-like mouse/timing
-        persistent_context="/sessions/threads",  # saves cookies/storage
+        persistent_context="/sessions/my-app",  # saves cookies/storage
         geoip=True,               # auto locale/timezone from IP
     ) as browser:
         page = await browser.new_page()
-        await page.goto("https://www.threads.net")
+        await page.goto("https://www.example.com")
         # actions...
 
 asyncio.run(main())
@@ -66,10 +76,10 @@ from camoufox.sync_api import Camoufox
 with Camoufox(
     headless=False,
     humanize=True,
-    persistent_context="/sessions/threads",
+    persistent_context="/sessions/my-app",
 ) as browser:
     page = browser.new_page()
-    page.goto("https://www.threads.net")
+    page.goto("https://www.example.com")
 ```
 
 ## Persistent Context (Session Survival)
@@ -78,11 +88,11 @@ Critical for login sessions that must survive container restarts.
 ```python
 # Path must be a directory — Camoufox stores cookies + localStorage + IndexedDB there
 async with AsyncCamoufox(
-    persistent_context="/sessions/threads",  # mount as Docker volume
+    persistent_context="/sessions/my-app",  # mount as Docker volume
     headless=False,
 ) as browser:
     page = await browser.new_page()
-    await page.goto("https://www.threads.net")
+    await page.goto("https://www.example.com")
     # First run: login manually via VNC
     # Subsequent runs: session restored automatically
 ```
@@ -90,8 +100,13 @@ async with AsyncCamoufox(
 Docker volume mount:
 ```yaml
 volumes:
-  - ./sessions:/sessions
+  - ./sessions:/sessions  # restrict permissions: chown to container UID, chmod 700
 ```
+
+> [!IMPORTANT]
+> Session directories contain authentication tokens and cookies.
+> Restrict host-side permissions (`chmod 700 ./sessions`) and never
+> commit session data to version control.
 
 ## Humanize Flag — What It Does
 `humanize=True` enables:
@@ -117,16 +132,23 @@ Each new browser instance gets a fresh fingerprint automatically.
 
 ## GeoIP Matching
 ```python
+import os
+
 async with AsyncCamoufox(
     geoip=True,           # auto-derive locale/timezone from proxy IP
     proxy={
-        "server": "http://proxy-ip:port",
-        "username": "user",
-        "password": "pass",
+        "server": os.environ["PROXY_URL"],       # e.g. http://proxy-ip:port
+        "username": os.environ["PROXY_USER"],
+        "password": os.environ["PROXY_PASS"],    # never hardcode credentials
     }
 ) as browser:
     ...
 ```
+
+> [!CAUTION]
+> Never hardcode proxy credentials in source code. Load them from
+> environment variables or a secrets manager (e.g., Docker secrets,
+> `.env` file excluded from version control).
 
 ## Headless on VPS (Xvfb Required)
 Camoufox needs a display even in "headless" mode for full stealth.
@@ -143,7 +165,7 @@ async with AsyncCamoufox(headless=False, ...) as browser:
 ## What Camoufox Does NOT Cover
 - Cloudflare Interstitial WAF (tests for SpiderMonkey engine behavior — impossible to fully spoof)
 - Sophisticated ML behavioral analysis (mouse patterns can still be flagged)
-- Non-Python languages (use remote server mode for Node/Go — see camoufox.com docs)
+- Non-Python languages (use remote server mode for Node/Go — see official docs)
 
 ## Anti-Patterns (Never Do)
 ```python
@@ -181,3 +203,9 @@ await page.screenshot(path="/sessions/debug.png")
 - Official docs: https://camoufox.com
 - GitHub: https://github.com/daijro/camoufox
 - Stealth internals: https://camoufox.com/stealth/
+
+> [!WARNING]
+> Camoufox distributes patched Firefox binaries — a third-party supply-chain
+> dependency. Before adopting: verify release signatures/checksums on the
+> [GitHub releases page](https://github.com/daijro/camoufox/releases),
+> pin the package version, and audit updates before upgrading.

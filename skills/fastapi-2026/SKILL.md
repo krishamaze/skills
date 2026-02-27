@@ -1,11 +1,11 @@
 ---
 name: fastapi-2026
 description: >
-  FastAPI async Python API patterns for 2026. Use this skill when building the bridge
-  between the browser automation layer and the frontend dashboard — route definitions,
-  async handlers, background tasks, WebSocket, Pydantic v2 models, lifespan events,
-  CORS, and production deployment with Gunicorn + Uvicorn workers. ALWAYS use async def
-  for I/O-bound routes. NEVER use sync DB calls in async routes.
+  FastAPI async Python API patterns for 2026. Use this skill when building API layers
+  for automation agents — route definitions, async handlers, background tasks, WebSocket,
+  Pydantic v2 models, lifespan events, CORS, and production deployment with Gunicorn +
+  Uvicorn workers. ALWAYS use async def for I/O-bound routes. NEVER use sync DB calls
+  in async routes.
 ---
 
 # FastAPI 2026 — Async API Patterns
@@ -21,12 +21,12 @@ description: >
 api/
 ├── main.py            # app entry, lifespan, middleware
 ├── routes/
-│   ├── browser.py     # browser control routes
+│   ├── tasks.py       # task/action routes
 │   └── drafts.py      # content queue routes
 ├── models/
 │   └── schemas.py     # Pydantic v2 models
 ├── services/
-│   └── browser.py     # browser automation logic
+│   └── automation.py  # automation logic
 └── core/
     └── config.py      # settings via pydantic-settings
 ```
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await browser_service.stop()
 
-app = FastAPI(title="Threads Agent API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="My Agent API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,20 +73,28 @@ class DraftPost(BaseModel):
 ```python
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
-router = APIRouter(prefix="/browser", tags=["browser"])
+router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-@router.get("/feed")
-async def get_feed() -> list[dict]:
+@router.get("/")
+async def list_tasks() -> list[dict]:
+    """Return pending tasks. Sanitize any third-party content before
+    surfacing it to the agent or using it in downstream actions."""
     try:
-        return await browser_service.read_feed()
+        return await task_service.list_pending()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/act")
-async def execute_action(action: BrowserAction, background_tasks: BackgroundTasks):
-    background_tasks.add_task(browser_service.execute, action)
+async def execute_action(action: AutomationAction, background_tasks: BackgroundTasks):
+    background_tasks.add_task(task_service.execute, action)
     return {"status": "queued"}
 ```
+
+> [!IMPORTANT]
+> If your API ingests or relays untrusted third-party content (e.g., social
+> feeds, user-generated data), **always sanitize and validate** that content
+> before passing it to agent decision-making or automated actions. Unsanitized
+> content is an indirect prompt-injection vector.
 
 ## Background Tasks (for browser actions)
 ```python
@@ -95,9 +103,9 @@ async def approve_draft(draft_id: str, background_tasks: BackgroundTasks):
     draft = await drafts_store.get(draft_id)
     if not draft:
         raise HTTPException(404, "Draft not found")
-    background_tasks.add_task(browser_service.post, draft.content)
+    background_tasks.add_task(task_service.publish, draft.content)
     await drafts_store.update(draft_id, status="approved")
-    return {"status": "posting", "draft_id": draft_id}
+    return {"status": "publishing", "draft_id": draft_id}
 ```
 
 ## WebSocket (live feed updates to dashboard)
@@ -147,9 +155,9 @@ uv run gunicorn api.main:app \
 ```
 
 ## Key Rules for Our Stack
-1. Never put blocking Playwright/Camoufox sync calls in `async def` — blocks event loop
-2. Always use `BackgroundTasks` for browser actions
-3. One browser instance — keep in a service class, not per-request
+1. Never put blocking sync calls in `async def` — blocks event loop
+2. Always use `BackgroundTasks` for long-running actions
+3. One service instance — keep in a service class, not per-request
 4. WebSocket for live updates to dashboard — not polling
 
 ## Anti-Patterns
@@ -167,7 +175,7 @@ class Post(BaseModel):
     model_config = {"from_attributes": True}
 
 # ❌ Sync call in async route
-@app.get("/feed")
-async def get_feed():
-    return browser.sync_read_feed()  # blocks event loop
+@app.get("/tasks")
+async def list_tasks():
+    return service.sync_list_tasks()  # blocks event loop
 ```
