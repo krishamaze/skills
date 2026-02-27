@@ -8,6 +8,7 @@
 | camoufox | >=0.4.0 | raw Playwright for stealth (per camoufox-2026 skill) |
 | Next.js | 15+/16+ | App Router only (per nextjs-approuter-2026 skill) |
 | FastAPI | latest | Flask/Django for async APIs (per fastapi-2026 skill) |
+| google-genai | latest | google-generativeai (legacy SDK) |
 
 ## Do-Not Patterns + Root Causes
 
@@ -15,3 +16,9 @@
 **Never:** Blindly `unzip *.skill -d skills/` without checking for top-level files.
 **Why:** `fastapi-2026.skill` contained a stray `SKILL.md` at archive root alongside the proper `fastapi-2026/SKILL.md` folder. Extracting wrote a junk `skills/SKILL.md`.
 **Instead:** Extract, then verify no unexpected top-level files. Clean up strays before committing.
+
+### Gemini legacy SDK import
+**Never:** `import google.generativeai as genai` or `pip install google-generativeai`.
+**Why:** Legacy SDK has no centralized Client, different API surface, won't support Gemini 3+ features. Causes silent feature gaps and broken code.
+**Instead:** `from google import genai` / `pip install google-genai`. All calls via `client = genai.Client()`.
+
