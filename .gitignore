@@ -9,3 +9,11 @@ Thumbs.db
 # Vyapar backup files — never commit client data
 *.vyb
 *.vyp
+
+# npx skills add — local install artifacts
+skills-lock.json
+.agents/
+
+# Distribution archives
+*.skill
+*.zip
