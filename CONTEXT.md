@@ -2,16 +2,16 @@
 **Updated:** 2026-02-27
 
 ## Current Layer
-Skills repo — bootstrapped and live. Status: verified
+Skills repo — 11 skills live. Status: verified
 
 ## Last Completed
-All 10 skills extracted, committed, and pushed to `krishamaze/skills` on `main`. `project-memory` installed to 8 agents via symlink.
+Extracted and committed `skill-creator`. Pushed to `krishamaze/skills` on `main`. Cleaned up `skill-creator.zip` from repo root.
 
 ## Active Blocker
 None
 
 ## Next Action
-Add skills to new projects (e.g. `threads-agent`) as they mature. Write new skills as new stack patterns solidify.
+Add skills to new projects as they mature. Write new skills as new stack patterns solidify.
 
 ## Deferred
-- Cleaning up `.skill` zip files and `files.zip` from the repo root (not committed, just local clutter)
+- None
