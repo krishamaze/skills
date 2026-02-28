@@ -22,9 +22,16 @@
 **Failure mode:** Stale skill copy diverges from repo version.
 
 ## ADR-004: Skills contain delta knowledge only — not general concepts
-**Status:** active
+**Status:** superseded by ADR-005
 **Decision:** Skills teach only what a 2024-trained model doesn't know. General concepts (streaming, embeddings, FC basics) are omitted.
 **Why:** Skills are context-window budget. Repeating known knowledge wastes tokens and dilutes the new information that actually matters. A skill is a patch, not a manual.
 **Do not:** Include tutorials for concepts the model already knows (e.g., "what is streaming", "how does function calling work").
 **Failure mode:** Skill bloats to 1000+ lines, exceeding the 500-line SKILL.md limit and burying critical delta knowledge in noise.
+
+## ADR-005: API skills are comprehensive and self-contained
+**Status:** active
+**Decision:** API reference skills (like gemini-api-2026) are self-contained with full code examples, model tables, and quick start — not delta-only.
+**Why:** Delta assumption breaks when models have varying training cutoffs. A comprehensive skill works for any model. Rich reference files offload deep-dive content, keeping SKILL.md as the hub. The 500-line limit applies to SKILL.md body; reference files extend capacity.
+**Do not:** Assume the consuming model knows any specific SDK syntax or model IDs.
+**Failure mode:** Model uses stale imports or deprecated model IDs because delta skill didn't cover "known" basics that were actually wrong.
 
