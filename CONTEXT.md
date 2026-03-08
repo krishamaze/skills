@@ -1,17 +1,17 @@
 # Context
-**Updated:** 2026-02-28
+**Updated:** 2026-03-08
 
 ## Current Layer
-Skills repo — 13 skills live. Status: verified
+Skills repo — 14 skills live. Status: verified
 
 ## Last Completed
-Replaced `gemini-api-2026` SKILL.md from 372-line delta-only to 962-line comprehensive version. Kept richer existing reference files for embeddings-and-rag and advanced-features. Total skill: 1,668 lines across 6 files.
+Installed `private-api-reversal` skill from `.skill` archive into `skills/private-api-reversal/`. 361-line SKILL.md covering methodology for reverse-engineering undocumented web APIs.
 
 ## Active Blocker
 None
 
 ## Next Action
-Run skill-creator test cases on gemini-api-2026 to verify triggering accuracy with the new comprehensive description.
+Verify skill triggering accuracy for `private-api-reversal`. Optionally run description optimization.
 
 ## Deferred
-- Skill description optimization — do after test cases confirm content quality
+- Skill description optimization for gemini-api-2026 — do after test cases confirm content quality
