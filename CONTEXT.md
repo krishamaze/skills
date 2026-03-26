@@ -2,10 +2,10 @@
 **Updated:** 2026-03-08
 
 ## Current Layer
-Skills repo — 17 skills live. Status: verified
+Skills repo — 18 skills live. Status: verified
 
 ## Last Completed
-Installed `google-flow-labs` (8.6KB) and `google-flow-prompting` (50.9KB) skills from `.skill` archives. Archive folder names had version suffixes (v2, v9) — installed with clean names.
+Installed `codex-orchestrator` skill from `.skill` archive. Covers 3-tier LLM orchestration of OpenAI Codex CLI: `codex exec` (simple), `codex app-server` JSON-RPC (stateful multi-turn), and `command/exec/write` (interactive stdin / PTY passthrough).
 
 ## Active Blocker
 None

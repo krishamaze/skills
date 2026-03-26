@@ -17,4 +17,4 @@ skills-lock.json
 # Distribution archives
 *.skill
 *.zip
-gemini-api-raw/
+_reference/
