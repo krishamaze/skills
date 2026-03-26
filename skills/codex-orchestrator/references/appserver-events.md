@@ -17,8 +17,24 @@ Source: codex-rs/app-server/README.md (verified March 2026)
 | `item/started` | Server→Client | Tool call or message began |
 | `item/completed` | Server→Client | Tool call or message done |
 | `item/agentMessage/delta` | Server→Client | Streaming text output chunk |
-| `item/commandOutput/delta` | Server→Client | Shell command stdout/stderr chunk |
-| `item/commandApproval/requested` | Server→Client | Server PAUSES turn, awaits response |
+| `item/commandExecution/outputDelta` | Server→Client | In-turn shell command stdout/stderr chunk |
+| `item/commandExecution/requestApproval` | Server→Client | Server PAUSES turn, awaits approval response |
+| `item/commandExecution/terminalInteraction` | Server→Client | Terminal stdin prompt detected (for interactive injection) |
+| `item/fileChange/requestApproval` | Server→Client | File write approval request |
+| `item/fileChange/outputDelta` | Server→Client | apply_patch tool call response |
+| `item/permissions/requestApproval` | Server→Client | Permissions change approval request |
+| `item/tool/requestUserInput` | Server→Client | Tool needs user input |
+| `item/autoApprovalReview/started` | Server→Client | Guardian auto-approval review began |
+| `item/autoApprovalReview/completed` | Server→Client | Guardian auto-approval review done |
+| `item/reasoning/summaryDelta` | Server→Client | Streaming reasoning summary |
+| `item/reasoning/textDelta` | Server→Client | Raw reasoning text (OSS models) |
+| `item/mcpToolCall/progress` | Server→Client | MCP tool call progress |
+
+## Standalone command/exec events
+
+| Event | Direction | Notes |
+|---|---|---|
+| `command/exec/outputDelta` | Server→Client | Base64-encoded output for standalone command/exec (not in-turn) |
 
 ## Commands (Client→Server)
 
@@ -27,17 +43,21 @@ Source: codex-rs/app-server/README.md (verified March 2026)
 | `initialize` | Handshake (send first, always) |
 | `initialized` | Acknowledge handshake (send second, always) |
 | `thread/start` | Create new conversation thread |
-| `thread/fork` | Fork from existing thread (= resume) |
+| `thread/resume` | Resume existing thread (continues in place) |
+| `thread/fork` | Fork from existing thread (branches history into new thread) |
 | `turn/start` | Send user message / prompt |
 | `turn/interrupt` | Cancel running turn |
-| `item/commandApproval/respond` | Allow or deny a command approval request |
-| `command/exec/write` | Inject stdin bytes into a running exec session |
-| `command/exec/resize` | Resize PTY of running exec session |
+| `turn/steer` | Steer active turn with additional guidance |
+| `command/exec` | Run standalone command in sandbox (no thread/turn) |
+| `command/exec/write` | Inject base64 stdin bytes (`deltaBase64`) into a running exec session |
+| `command/exec/resize` | Resize PTY of running exec session (`size: {rows, cols}`) |
 | `command/exec/terminate` | Kill running exec session |
 | `account/read` | Get auth state |
 | `account/login/start` | Begin auth flow (apiKey or chatgpt) |
 | `model/list` | List available models |
 | `skills/list` | List AGENTS.md skills for cwd |
+| `config/mcpServer/reload` | Reload MCP server config |
+| `review/start` | Start guardian review |
 
 ## Token Usage
 
@@ -52,6 +72,20 @@ Source: codex-rs/app-server/README.md (verified March 2026)
 | -32001 | Server overloaded — retry with exponential backoff + jitter |
 | "Not initialized" | initialize not sent yet |
 | "Already initialized" | initialize sent twice |
+
+## Additional Notifications
+
+| Event | Direction | Notes |
+|---|---|---|
+| `thread/archived` | Server→Client | Thread was archived |
+| `thread/unarchived` | Server→Client | Thread was unarchived |
+| `thread/closed` | Server→Client | Thread was closed |
+| `thread/name/updated` | Server→Client | Thread name changed |
+| `skills/changed` | Server→Client | Available skills changed |
+| `turn/plan/updated` | Server→Client | Turn plan updated |
+| `model/rerouted` | Server→Client | Model was rerouted |
+| `configWarning` | Server→Client | Configuration warning |
+| `serverRequest/resolved` | Server→Client | Server request resolved |
 
 ## Transport Options
 

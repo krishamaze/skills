@@ -40,7 +40,7 @@ codex exec "refactor src/auth.ts to use async/await" --json
 
 **Resume a session:**
 ```bash
-codex exec --last "now add unit tests for what you just wrote"
+codex exec resume --last "now add unit tests for what you just wrote"
 ```
 
 **Pipe prompt from LLM output:**
@@ -70,7 +70,7 @@ codex exec --dangerously-bypass-approvals-and-sandbox -C /path/to/project "your 
 4. Read stdout, decide next task
 5. Repeat
 
-**Limitation:** No approval handling. No mid-turn injection. Use Tier 2 for anything stateful.
+**Limitation:** Approvals disabled by default in exec mode (headless, `approval_policy=never`). No mid-turn injection. Use Tier 2 for stateful or approval-aware orchestration.
 
 ---
 
@@ -84,11 +84,12 @@ The real mechanism. Bidirectional JSON-RPC over stdio. This is how VS Code, Xcod
 - Fully bidirectional — server sends requests back to client (approvals)
 
 ### Model discovery (do this first)
-Before writing any orchestrator, detect the configured model so thread/start uses the right value:
-```bash
-grep '^model' ~/.codex/config.toml | cut -d'"' -f2
-```
-Hardcoding a model name (e.g. o4-mini) will fail silently if the user's account does not support it. Always read from config.toml first.
+Model resolution is layered: CLI `--model` flag wins, then config profile, then global `config.toml`. For app-server orchestration:
+- **Option A:** Omit `model` in `thread/start` — the server uses its configured default. The `ThreadStartResponse` returns the resolved `model` and `modelProvider`.
+- **Option B:** Call `model/list` first to discover available models, then pass one explicitly.
+- **Quick check:** `grep '^model' ~/.codex/config.toml | cut -d'"' -f2`
+
+Hardcoding a model name (e.g. `o4-mini`) will fail if the user's account does not support it.
 
 ### Handshake sequence (always in this order):
 ```jsonl
@@ -112,14 +113,16 @@ turn/diff/updated   → file changes as unified diff
 ```
 
 ### Approval handling (server asks LLM, not human):
+Server sends a **request** (has `id`) that the client must respond to:
 ```jsonl
-// Server sends (no id = notification the LLM must respond to):
-{"method":"item/commandApproval/requested","params":{"itemId":"x","command":"rm -rf dist/"}}
+// Server → Client (request, must respond):
+{"method":"item/commandExecution/requestApproval","id":42,"params":{"threadId":"t","turnId":"u","itemId":"x","command":{"command":"rm -rf dist/"}}}
 
-// LLM responds:
-{"method":"item/commandApproval/respond","id":99,"params":{"itemId":"x","decision":"allow"}}
-// or "deny"
+// Client → Server (response):
+{"id":42,"result":{"decision":"accept"}}
+// decisions: "accept", "acceptForSession", "deny"
 ```
+Other approval request types: `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `item/tool/requestUserInput`.
 
 ### Minimal Node.js orchestrator:
 ```javascript
@@ -205,7 +208,7 @@ When Codex itself runs a shell command that asks for input (y/n, sudo password, 
 
 ### The LLM flow:
 ```
-app-server streams: item/commandOutput/delta with text "Do you want to continue? [y/N]"
+app-server streams: item/commandExecution/outputDelta with "Do you want to continue? [y/N]"
            ↓
 Outer LLM reads the delta, detects prompt pattern
            ↓
@@ -216,12 +219,13 @@ Process continues
 
 ### command/exec/write call:
 ```jsonl
-{"method":"command/exec/write","id":55,"params":{"sessionId":"<exec-session-id>","data":"y\n"}}
+{"method":"command/exec/write","id":55,"params":{"processId":"<process-id>","deltaBase64":"eQo=","closeStdin":false}}
 ```
+`deltaBase64` is base64-encoded stdin bytes (`"eQo="` = `"y\n"`). Set `closeStdin: true` to close stdin after writing.
 
 For resize:
 ```jsonl
-{"method":"command/exec/resize","id":56,"params":{"sessionId":"<id>","cols":220,"rows":50}}
+{"method":"command/exec/resize","id":56,"params":{"processId":"<process-id>","size":{"rows":50,"cols":220}}}
 ```
 
 ### OTP pipeline (email OTP example):
@@ -256,7 +260,7 @@ command/exec/write → sends "123456\n"
 | PTY-inject keystrokes into Codex TUI | Brittle. Ratatui owns the TTY. Confirmed broken upstream (issue #15355). |
 | `node-pty` to wrap `codex` TUI | Same problem. Two TTY owners conflict. |
 | Parse TUI terminal escape codes | Fragile, breaks on any version update |
-| `codex exec` for multi-turn | No state continuity between exec calls |
+| `codex exec` for multi-turn without resume | Use `codex exec resume --last` for continuity, or Tier 2 for real multi-turn |
 | `--full-auto` in sandboxed containers | `bwrap` fails silently → all writes fail. Use `--dangerously-bypass-approvals-and-sandbox` instead. |
 
 ---
@@ -277,11 +281,15 @@ command/exec/write → sends "123456\n"
 ## Session continuity
 
 ```javascript
-// Fork from a previous session (= codex resume equivalent)
-send({ method: "thread/fork", id: 3, params: { threadId: "prev-thread-id" } });
+// Resume an existing session (continues in place):
+send({ method: "thread/resume", id: 3, params: { threadId: "prev-thread-id" } });
 
-// Codex persists session rollout files — use --ephemeral to skip:
-// spawn("codex", ["app-server", "--ephemeral"])
+// Fork from a previous session (branches history into new thread):
+send({ method: "thread/fork", id: 4, params: { threadId: "prev-thread-id" } });
+
+// Ephemeral threads (in-memory only, not persisted to disk):
+// Pass ephemeral: true in thread/start or thread/fork params
+send({ method: "thread/start", id: 5, params: { ephemeral: true } });
 ```
 
 ---
@@ -307,8 +315,8 @@ If `codex exec` or `apply_patch` fails with:
 bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted
 ```
 The environment cannot create network namespaces (common in containers, VMs, CI). Fix:
-- **Tier 1:** Use `--dangerously-bypass-approvals-and-sandbox` instead of `--full-auto`
-- **Tier 2:** Spawn with `--dangerously-bypass-approvals-and-sandbox`: `spawn("codex", ["app-server", "--dangerously-bypass-approvals-and-sandbox"])`
+- **Tier 1 (`codex exec`):** Use `--dangerously-bypass-approvals-and-sandbox` instead of `--full-auto`
+- **Tier 2 (`codex app-server`):** Standalone app-server does not have `--dangerously-bypass-approvals-and-sandbox`. Instead, override sandbox per-turn via `turn/start` params: `"approvalPolicy": "never", "sandbox": {"type": "dangerFullAccess"}`
 - **Root cause:** bubblewrap (`bwrap`) requires `CAP_NET_ADMIN` to configure loopback. Containers typically drop this capability.
 
 ---
