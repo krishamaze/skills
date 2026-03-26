@@ -13,6 +13,7 @@ Thumbs.db
 # npx skills add — local install artifacts
 skills-lock.json
 .agents/
+.claude/
 
 # Distribution archives
 *.skill
