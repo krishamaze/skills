@@ -2,7 +2,7 @@
 // Thin bridge: Claude Code ↔ Codex app-server (one turn per invocation)
 import { execSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,10 +22,11 @@ const CODEX_BIN = resolveCodexPath();
 // --- Config ---
 function getModel() {
   try {
-    const out = execSync('grep "^model" ~/.codex/config.toml', { encoding: "utf8" });
-    const match = out.match(/"([^"]+)"/);
-    return match ? match[1] : "gpt-5.4";
-  } catch { return "gpt-5.4"; }
+    const configPath = resolve(process.env.HOME || process.env.USERPROFILE || "~", ".codex", "config.toml");
+    const content = readFileSync(configPath, "utf8");
+    const match = content.match(/^model\s*=\s*"([^"]+)"/m);
+    return match ? match[1] : null;
+  } catch { return null; }
 }
 
 // --- Args ---
@@ -33,24 +34,32 @@ const resume = process.argv.includes("--resume");
 const cIdx = process.argv.indexOf("-C");
 const tIdx = process.argv.indexOf("--timeout");
 const ctxIdx = process.argv.indexOf("--context-cmd");
+const sandboxIdx = process.argv.indexOf("--sandbox");
+const approvalIdx = process.argv.indexOf("--approval");
 const inactivityMs = (tIdx !== -1 && process.argv[tIdx + 1]) ? parseInt(process.argv[tIdx + 1]) * 1000 : 60_000;
 const projectDir = cIdx !== -1 && process.argv[cIdx + 1]
   ? resolve(process.argv[cIdx + 1])
-  : resolve(__dirname, "..", "..", "..");
+  : process.cwd();
+const sandboxMode = sandboxIdx !== -1 && process.argv[sandboxIdx + 1] ? process.argv[sandboxIdx + 1] : "danger-full-access";
+const approvalPolicy = approvalIdx !== -1 && process.argv[approvalIdx + 1] ? process.argv[approvalIdx + 1] : "never";
 const stateKey = projectDir.replace(/[^a-zA-Z0-9]/g, "_");
-const STATE_FILE = resolve(__dirname, `codex-state-${stateKey}.json`);
+const STATE_DIR = resolve(projectDir, ".codex");
+mkdirSync(STATE_DIR, { recursive: true });
+const STATE_FILE = resolve(STATE_DIR, `bridge-state-${stateKey}.json`);
 const contextCmd = ctxIdx !== -1 && process.argv[ctxIdx + 1] ? process.argv[ctxIdx + 1] : null;
 const prompt = process.argv
   .filter((arg, idx) => {
-    if (idx < 2 || arg === "--resume" || arg === "-C" || arg === "--timeout" || arg === "--context-cmd") return false;
+    if (idx < 2 || arg === "--resume" || arg === "-C" || arg === "--timeout" || arg === "--context-cmd" || arg === "--sandbox" || arg === "--approval") return false;
     if (cIdx !== -1 && idx === cIdx + 1) return false;
     if (tIdx !== -1 && idx === tIdx + 1) return false;
     if (ctxIdx !== -1 && idx === ctxIdx + 1) return false;
+    if (sandboxIdx !== -1 && idx === sandboxIdx + 1) return false;
+    if (approvalIdx !== -1 && idx === approvalIdx + 1) return false;
     return true;
   })
   .join(" ");
 if (!prompt) {
-  console.error("Usage: node codex-bridge.mjs [--resume] [-C <project-dir>] [--timeout <seconds>] [--context-cmd <shell-cmd>] \"<prompt>\"");
+  console.error("Usage: node codex-bridge.mjs [--resume] [-C <project-dir>] [--timeout <seconds>] [--context-cmd <shell-cmd>] [--sandbox <mode>] [--approval <policy>] \"<prompt>\"");
   process.exit(1);
 }
 
@@ -63,8 +72,8 @@ if (existsSync(STATE_FILE)) {
 // --- Spawn app-server ---
 const proc = spawn(CODEX_BIN, [
   "app-server",
-  "-c", 'sandbox_mode="danger-full-access"',
-  "-c", 'approval_policy="never"',
+  "-c", `sandbox_mode="${sandboxMode}"`,
+  "-c", `approval_policy="${approvalPolicy}"`,
 ], {
   stdio: ["pipe", "pipe", "pipe"],
   cwd: projectDir,
@@ -79,6 +88,8 @@ let errors = [];
 let tokenUsage = null;
 let filesModified = [];
 let handshakeDone = false;
+let turnCompleted = false;
+let finished = false;
 
 const send = (msg) => proc.stdin.write(JSON.stringify(msg) + "\n");
 const nextId = () => ++idCounter;
@@ -125,6 +136,8 @@ function getChangedPathInfo(params = {}) {
 }
 
 function finish() {
+  if (finished) return;
+  finished = true;
   clearTimeout(inactivityTimer);
   const result = { output: output.trim(), diffs, errors, threadId, tokenUsage };
   // Save state for resume
@@ -172,7 +185,8 @@ rl.on("line", (line) => {
     if (resume && threadId) {
       send({ method: "thread/fork", id: 1, params: { threadId } });
     } else {
-      send({ method: "thread/start", id: 1, params: { model: getModel() } });
+      const model = getModel();
+      send({ method: "thread/start", id: 1, params: model ? { model } : {} });
     }
     return;
   }
@@ -224,6 +238,7 @@ rl.on("line", (line) => {
 
   // Turn complete
   if (msg.method === "turn/completed") {
+    turnCompleted = true;
     finish();
   }
 
@@ -243,6 +258,10 @@ proc.on("close", (code) => {
     const result = { output: "", diffs: [], errors, threadId: null, tokenUsage };
     console.log(JSON.stringify(result, null, 2));
     process.exit(1);
+  }
+  if (handshakeDone && !turnCompleted && !finished) {
+    errors.push(`app-server crashed mid-turn (exit code ${code})`);
+    finish();
   }
 });
 

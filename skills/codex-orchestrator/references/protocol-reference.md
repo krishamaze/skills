@@ -111,6 +111,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic();
 const MODEL = process.env.CODEX_MODEL || "gpt-5.4"; // discover from config.toml
+// NOTE: On Windows, resolve full path first: execSync("where codex").trim() — see scripts/codex-bridge.mjs for cross-platform implementation
 const proc = spawn("codex", ["app-server", "-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"'], {
   stdio: ["pipe", "pipe", "inherit"],
   cwd: "/your/project",
@@ -281,7 +282,7 @@ bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted
 ```
 The environment cannot create network namespaces (common in containers, VMs, CI). Fix:
 - **Tier 1 (`codex exec`):** Use `--dangerously-bypass-approvals-and-sandbox` instead of `--full-auto`
-- **Tier 2 (`codex app-server`):** Standalone app-server does not have `--dangerously-bypass-approvals-and-sandbox`. Instead, override sandbox per-turn via `turn/start` params: `"approvalPolicy": "never", "sandbox": {"type": "dangerFullAccess"}`
+- **Tier 2 (`codex app-server`):** Use `-c` flags when spawning: `codex app-server -c sandbox_mode="danger-full-access" -c approval_policy="never"`
 - **Root cause:** bubblewrap (`bwrap`) requires `CAP_NET_ADMIN` to configure loopback. Containers typically drop this capability.
 
 ---

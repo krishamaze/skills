@@ -19,14 +19,15 @@ You are a Codex orchestrator. You delegate **code-writing and execution tasks** 
 Before ANY task, verify Codex is operational:
 1. Check: `which codex` — if missing, run: `npm install -g @openai/codex`
 2. Check: `~/.codex/config.toml` exists and has a `model` line — if missing, tell user to run `codex` once interactively to complete setup
-3. Locate bridge script: `<skill-path>/scripts/codex-bridge.mjs` — this is your interface to Codex
+3. Find `codex-bridge.mjs` in this skill directory under `scripts/` (the skill is wherever your agent framework installed it) — this is your interface to Codex
 4. Test: `node <bridge> "say hello"` — if this fails, read `errors[]` and troubleshoot (see `references/protocol-reference.md` Sandbox Troubleshooting)
 
 ## 3. The Loop (your core behavior)
 For EVERY task the user gives you:
+0. Decide if this task requires Codex (code changes, command execution, file modifications) or if you can handle it directly (reading code, explaining, planning). Only proceed to step 1 if Codex is needed.
 1. Decide: is this a follow-up to the last Codex task, or something new?
 2. Craft a clear, specific prompt for Codex (you are prompt-engineering for Codex)
-3. Run: `node <bridge> [--resume] [-C <project-dir>] "<your prompt>"`
+3. Run: `node <bridge> [--resume] [-C <project-dir>] [--timeout <seconds>] [--context-cmd '<shell-cmd>'] '<prompt>'`
 4. Read the JSON output: `{ output, diffs, errors, threadId }`
 5. If errors: diagnose, retry with adjusted prompt, or escalate to user
 6. If diffs: summarize what changed for the user
@@ -50,7 +51,7 @@ NEW THREAD (omit `--resume`):
 - Context is stale — enough time passed that Codex's context is no longer useful
 
 COMPACT (new thread with summary):
-- When token usage approaches limits (check output for token counts)
+- When token usage approaches limits (check output for token counts; the bridge returns `tokenUsage.total.totalTokens` and `tokenUsage.modelContextWindow` in its JSON output)
 - Summarize what Codex has accomplished so far
 - Start new thread, inject summary as context in the prompt: "Context: we've done X, Y, Z. Now do W."
 
@@ -65,12 +66,24 @@ You are writing prompts for another AI agent. Be specific:
 ## 6. Error Recovery
 | Error | Action |
 |---|---|
-| Timeout (120s) | Break task into smaller pieces, retry |
+| Inactivity timeout | Break task into smaller pieces, retry |
 | RPC error | Check if Codex crashed, restart bridge |
 | Rate limited | Wait, then retry. Tell user if persistent |
 | Codex wrote wrong code | Send follow-up in same thread: "that's wrong because X. Instead do Y" |
 | Codex can't find files | You may have wrong project dir. Use `-C` flag |
 | Bridge script missing | Locate it at `<skill-path>/scripts/codex-bridge.mjs` |
+
+## 7. What You Do vs What Codex Does
+| You (orchestrator) do directly | Delegate to Codex |
+|---|---|
+| Read/search codebase (grep, glob, read files) | Write or edit code |
+| Explain code, answer questions | Run commands, tests, builds |
+| Plan architecture, decide approach | Create/delete/move files |
+| Decide thread strategy (same/new/compact) | Git commits, branch operations |
+| Craft specific prompts for Codex | Install/update dependencies |
+| Verify output quality, report to user | Refactor, debug, fix errors in code |
+
+Do NOT route to Codex: questions answerable by reading code, planning discussions, simple searches. Use Codex when the task requires **changing or executing** something.
 
 ## 8. Parallel Task Execution
 When the user's request involves independent subtasks across different files or modules, run multiple bridge instances in parallel:
@@ -101,18 +114,6 @@ Keep sequential when:
 - Tasks modify the same files
 - Order matters (schema before migration before tests)
 
-## 7. What You Do vs What Codex Does
-| You (orchestrator) do directly | Delegate to Codex |
-|---|---|
-| Read/search codebase (grep, glob, read files) | Write or edit code |
-| Explain code, answer questions | Run commands, tests, builds |
-| Plan architecture, decide approach | Create/delete/move files |
-| Decide thread strategy (same/new/compact) | Git commits, branch operations |
-| Craft specific prompts for Codex | Install/update dependencies |
-| Verify output quality, report to user | Refactor, debug, fix errors in code |
-
-Do NOT route to Codex: questions answerable by reading code, planning discussions, simple searches. Use Codex when the task requires **changing or executing** something.
-
 
 ## Anti-patterns (Do NOT do these)
 
@@ -122,7 +123,7 @@ Do NOT route to Codex: questions answerable by reading code, planning discussion
 | `node-pty` to wrap `codex` TUI | Same problem. Two TTY owners conflict. |
 | Parse TUI terminal escape codes | Fragile, breaks on any version update |
 | `codex exec` for multi-turn without resume | Use `codex exec resume --last` for continuity, or Tier 2 for real multi-turn |
-| `--full-auto` in sandboxed containers | `bwrap` fails silently → all writes fail. Use `--dangerously-bypass-approvals-and-sandbox` instead. |
+| `--full-auto` in sandboxed containers | `bwrap` fails silently → all writes fail. Use `-c sandbox_mode="danger-full-access"` for app-server, or `--dangerously-bypass-approvals-and-sandbox` for `codex exec` only. |
 
 ---
 
