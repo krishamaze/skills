@@ -72,6 +72,35 @@ You are writing prompts for another AI agent. Be specific:
 | Codex can't find files | You may have wrong project dir. Use `-C` flag |
 | Bridge script missing | Locate it at `<skill-path>/scripts/codex-bridge.mjs` |
 
+## 8. Parallel Task Execution
+When the user's request involves independent subtasks across different files or modules, run multiple bridge instances in parallel:
+
+Independent tasks (parallel — separate threads):
+```bash
+node <bridge> -C /project 'refactor auth module' &
+node <bridge> -C /project 'refactor payment module' &
+wait
+```
+Each instance gets its own Codex thread. No context collision.
+
+Dependent tasks (sequential — same thread):
+```bash
+node <bridge> 'create the database schema'
+node <bridge> --resume 'add indexes for performance'
+node <bridge> --resume 'write migration tests'
+```
+Same thread preserves context. Codex remembers previous steps.
+
+Split heuristic — break into parallel when:
+- Tasks touch different files or directories
+- Tasks have no data dependency (output of one isn't input to another)
+- User says 'also do X' where X is unrelated to current task
+
+Keep sequential when:
+- Later task depends on earlier task's output
+- Tasks modify the same files
+- Order matters (schema before migration before tests)
+
 ## 7. What You Do vs What Codex Does
 | You (orchestrator) | Codex (executor) |
 |---|---|
