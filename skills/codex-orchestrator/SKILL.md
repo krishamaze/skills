@@ -98,6 +98,13 @@ Hardcoding a model name (e.g. `o4-mini`) will fail if the user's account does no
 {"method":"thread/start","id":1,"params":{"model":"<MODEL_FROM_CONFIG>"}}
 ```
 
+### Valid `-c` config override values
+When spawning app-server with `-c` flags to override sandbox/approval behavior:
+| Config key | Valid values |
+|---|---|
+| `sandbox_mode` | `read-only`, `workspace-write`, `danger-full-access` |
+| `approval_policy` | `untrusted`, `on-failure`, `on-request`, `granular`, `never` |
+
 ### Send a turn (= what you type as human):
 ```jsonl
 {"method":"turn/start","id":2,"params":{"threadId":"<id from thread/start response>","input":[{"type":"text","text":"fix all type errors in src/"}]}}
@@ -132,7 +139,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic();
 const MODEL = process.env.CODEX_MODEL || "gpt-5.4"; // discover from config.toml
-const proc = spawn("codex", ["app-server"], {
+const proc = spawn("codex", ["app-server", "-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"'], {
   stdio: ["pipe", "pipe", "inherit"],
   cwd: "/your/project",
 });
@@ -166,11 +173,10 @@ rl.on("line", async (line) => {
   }
 
   // Handle approvals — LLM decides allow/deny
-  if (msg.method === "item/commandApproval/requested") {
-    const { itemId, command } = msg.params;
-    const safe = await outerLLMApprove(command); // your LLM judges safety
-    send({ method: "item/commandApproval/respond", id: Date.now(),
-           params: { itemId, decision: safe ? "allow" : "deny" } });
+  if (msg.method === "item/commandExecution/requestApproval") {
+    const { command } = msg.params;
+    const safe = await outerLLMApprove(command?.command ?? ""); // your LLM judges safety
+    send({ id: msg.id, result: { decision: safe ? "accept" : "deny" } });
   }
 });
 
