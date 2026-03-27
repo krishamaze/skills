@@ -8,6 +8,17 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// --- Resolve codex binary (npm global wrappers aren't found by spawn on Windows) ---
+function resolveCodexPath() {
+  try {
+    const cmd = process.platform === "win32" ? "where codex" : "which codex";
+    return execSync(cmd, { encoding: "utf8" }).trim().split(/\r?\n/)[0];
+  } catch {
+    return "codex"; // fallback to bare name
+  }
+}
+const CODEX_BIN = resolveCodexPath();
+
 // --- Config ---
 function getModel() {
   try {
@@ -50,7 +61,7 @@ if (existsSync(STATE_FILE)) {
 }
 
 // --- Spawn app-server ---
-const proc = spawn("codex", [
+const proc = spawn(CODEX_BIN, [
   "app-server",
   "-c", 'sandbox_mode="danger-full-access"',
   "-c", 'approval_policy="never"',
