@@ -48,3 +48,17 @@
 **Why:** A persistent server preserves thread continuity for `codex_resume`, while task-shaped tools let the orchestrator pick the right Codex behavior without rebuilding role instructions on every turn.
 **Do not:** Spawn a fresh Codex process for every MCP call or collapse the tool surface back into one opaque bash command.
 **Failure mode:** Resume semantics break, tool behavior becomes inconsistent, and MCP callers lose the predictable separation between search, execute, review, debug, and test flows.
+
+## ADR-008: Resume from repo memory and live git state, not agent-home logs alone
+**Status:** active
+**Decision:** Use repo `CONTEXT.md` / `DECISIONS.md` / `STACK.md` plus current git/worktree state as the canonical resume layer; treat `~/.claude`, `~/.codex`, and `~/.gemini` state as evidence to reconcile, not truth to execute blindly.
+**Why:** Agent-home memories, audits, and session logs can lag the actual repository or each other. Reconciling them against live files and git prevents stale resumptions and preserves one project-level handoff source.
+**Do not:** Continue a task solely because it appears latest in one agent's home directory without checking repo memory and current git status.
+**Failure mode:** An agent resumes the wrong thread, repeats finished work, or ignores newer user changes already present in the workspace.
+
+## ADR-009: codex-mcp readiness requires a live MCP handshake and real tool calls
+**Status:** active
+**Decision:** Consider `codex-mcp` validated only after a live stdio MCP session successfully completes `initialize`, `tools/list`, and at least one real tool call such as `codex_search` or `codex_execute` against a project.
+**Why:** Static config and process startup do not prove that the wrapper can spawn Codex app-server, expose all 6 tools, and return real end-to-end results. The live handshake catches integration breakage before a user hits it in Claude Code.
+**Do not:** Mark `codex-mcp` done based only on `.mcp.json` existing or the wrapper process starting.
+**Failure mode:** Claude Code appears configured, but the first real MCP call hangs or fails because the bridge or nested Codex path is broken.

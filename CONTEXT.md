@@ -2,16 +2,16 @@
 **Updated:** 2026-03-28
 
 ## Current Layer
-Skills repo — `codex-orchestrator` rewrite plus `codex-mcp` addition. Status: verified
+Skills repo — agent-state audit + `codex-mcp` end-to-end validation. Status: verified
 
 ## Last Completed
-Stabilized `skills/codex-mcp/scripts/codex-mcp-server.mjs`, corrected the Tier 1 protocol reference, and cleaned local-only files out of the commit path.
+Consolidated Claude/Codex/Gemini state, confirmed the older Gemini replacement thread already landed in `07f9249`, live-tested `.mcp.json` by initializing `codex-mcp`, listing all 6 tools, and successfully calling `codex_search` plus `codex_execute`, then reconciled the worktree by keeping `skills/agent-handoff/` and `skills/agent-handoff-workspace/` untracked while removing the installed `skill-creator` and `frontend-design` copies.
 
 ## Active Blocker
 None.
 
 ## Next Action
-Run an end-to-end Claude Code restart check to confirm the MCP tools load from `.mcp.json` and behave correctly against a real project.
+No immediate task. Await the next repo change or prompt-trial follow-up.
 
 ## Deferred
-- Tighten `codex-orchestrator` and `codex-mcp` trigger descriptions after a few real prompt trials.
+- Tighten `codex-orchestrator` and `codex-mcp` trigger descriptions after more real prompt trials.
