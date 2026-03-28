@@ -5,6 +5,7 @@ import { execSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 
 // --- Resolve codex binary ---
 function resolveCodexPath() {
@@ -19,7 +20,7 @@ function resolveCodexPath() {
 function getModel() {
   try {
     const configPath = resolve(
-      process.env.HOME || process.env.USERPROFILE || "~",
+      process.env.HOME || process.env.USERPROFILE || homedir(),
       ".codex",
       "config.toml"
     );
@@ -32,7 +33,7 @@ function getModel() {
 }
 
 const CODEX_BIN = resolveCodexPath();
-const DANGEROUS = /rm\s+-rf\s+[/~]|DROP\s+TABLE|format\s+C:|shutdown|reboot/i;
+const DANGEROUS = /rm\s+-rf\s+[/~]|DROP\s+TABLE|format\s+C:|\bshutdown\b|\breboot\b/i;
 
 // --- App-server process pools (separate namespaces for run vs review) ---
 const runServers    = new Map(); // projectDir → server (for codex_run)
@@ -49,7 +50,11 @@ function registryFile(projectDir) {
 function readRegistry(projectDir) {
   const file = registryFile(projectDir);
   let registry = { session: null, threads: [] };
-  try { registry = JSON.parse(readFileSync(file, "utf8")); } catch {}
+  try { registry = JSON.parse(readFileSync(file, "utf8")); } catch (err) {
+    if (existsSync(file)) {
+      process.stderr.write(`[codex-mcp] Warning: failed to parse registry at ${file}: ${err.message}\n`);
+    }
+  }
   if (!Array.isArray(registry.threads)) registry.threads = [];
   return registry;
 }
@@ -535,14 +540,19 @@ mcpRl.on("line", async (line) => {
   switch (method) {
     case "initialize":
       mcpResult(id, {
-        protocolVersion: "2025-11-25",
-        capabilities: { tools: {} },
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {}, resources: {} },
         serverInfo: { name: "codex-mcp", version: "1.0.0" },
       });
       break;
 
     case "notifications/initialized":
       // Client acknowledgement, no response needed
+      break;
+
+    case "resources/list":
+      // This server exposes tools only — return empty list so clients don't error
+      mcpResult(id, { resources: [] });
       break;
 
     case "tools/list":

@@ -11,7 +11,7 @@ description: >
   per task type. Use this skill whenever the user mentions: "set up codex MCP",
   "connect codex to claude", "codex MCP server", "install codex tools",
   "configure codex integration", or wants Codex available as native tools in
-  Claude Code. Install per-project, not globally.
+  any agent. Install globally once — works across all projects and all agents.
 ---
 
 ## Your role when these tools are available
@@ -32,6 +32,13 @@ the task:
 **Incremental prompting:** don't dump everything into one call. Send focused
 turns, use each response to craft the next prompt. Pass `thread_id` to
 continue a previous run with full context.
+
+**Always pass `project_dir`:** the server is installed globally and uses
+`process.cwd()` as fallback, which may not be the project root depending on
+how the agent spawns it. Always pass `project_dir` explicitly:
+```
+codex_run(mode=explore, project_dir="/absolute/path/to/project", prompt="...")
+```
 
 **Review pattern:** after `codex_run(mode=build)` changes code, use
 `codex_review` in a fresh thread with the original requirement — Codex
@@ -69,28 +76,36 @@ discovery, approval handling, and timeout transparently.
 
 ## Setup (run this automatically when skill triggers)
 
-When this skill triggers, run these steps. The user only needs to restart
-Claude Code at the end.
+When this skill triggers, run these steps. The script is installed globally
+once per machine — all agents and all projects share the same installation.
+`memory/` is created per-project automatically on first tool call.
 
-### 0. Deploy the MCP server script
+### 0. Deploy the MCP server script globally (one-time per machine)
 
-The skill needs `codex-mcp-server.mjs` present at
-`<skill-dir>/scripts/codex-mcp-server.mjs`.
+Check if already installed:
 
-Check if it's already there:
+```bash
+ls "$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs" 2>/dev/null && echo "EXISTS" || echo "MISSING"
+```
+
+If MISSING, check the skill source:
 
 ```bash
 ls <skill-dir>/scripts/codex-mcp-server.mjs 2>/dev/null && echo "EXISTS" || echo "MISSING"
 ```
 
-If MISSING, the user must provide `codex-mcp-server.mjs`. Ask them to place
-it at:
+If skill source is also MISSING, the user must provide `codex-mcp-server.mjs`.
+Do not proceed until it exists.
 
-```
-<skill-dir>/scripts/codex-mcp-server.mjs
+Install globally:
+
+```bash
+mkdir -p "$HOME/.local/share/codex-mcp/scripts"
+cp <skill-dir>/scripts/codex-mcp-server.mjs "$HOME/.local/share/codex-mcp/scripts/"
+echo "Installed: $HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs"
 ```
 
-Do not proceed to Step 1 until this file exists.
+If already EXISTS and the user is not explicitly reinstalling, skip this step.
 
 ### 1. Check prerequisites
 
@@ -99,69 +114,184 @@ which codex || echo "MISSING"
 grep '^model' ~/.codex/config.toml 2>/dev/null || echo "MISSING"
 ```
 
-If codex is missing: `npm install -g @openai/codex`  
+If codex is missing: `npm install -g @openai/codex`
 If config is missing: tell the user to run `codex` once interactively to
 complete setup, then come back.
 
-### 2. Resolve the script path
+### 2. Configure agents globally (one-time per machine)
 
-The MCP server script is at `scripts/codex-mcp-server.mjs` inside this skill
-directory. Resolve the absolute path:
+The script is at `$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs`.
+All agent configs point to this stable path. Configure only the agents the
+user has installed.
+
+**Detect installed agents:**
 
 ```bash
-realpath <skill-dir>/scripts/codex-mcp-server.mjs
+which claude   2>/dev/null && echo "CLAUDE_CODE=yes"  || echo "CLAUDE_CODE=no"
+which codex    2>/dev/null && echo "CODEX_CLI=yes"    || echo "CODEX_CLI=no"
+which gemini   2>/dev/null && echo "GEMINI_CLI=yes"   || echo "GEMINI_CLI=no"
+[ -d "$HOME/.cursor" ]                       && echo "CURSOR=yes"      || echo "CURSOR=no"
+[ -f "$HOME/.gemini/antigravity/mcp_config.json" ] && echo "ANTIGRAVITY=yes" || echo "ANTIGRAVITY=no"
 ```
 
-This skill is typically symlinked at `.claude/skills/codex-mcp` in the
-project root.
+Report findings, pause, confirm before writing. Example:
 
-### 3. Write the MCP config and gitignore
+```
+Detected agents:
+  ✅ Claude Code   → configure via: claude mcp add --scope user
+  ✅ Codex CLI     → configure via: ~/.codex/config.toml
+  ✅ Gemini CLI    → configure via: ~/.gemini/settings.json
+  ❌ Cursor        → not detected
+  ✅ Antigravity   → configure via: ~/.gemini/antigravity/mcp_config.json
+  ℹ️  Augment Code  → GUI only, show snippet
 
-Check if `.mcp.json` exists in the project root. If it does, merge the codex
-entry. If not, create it.
+Proceed?
+```
+
+Wait for confirmation, then write only confirmed agents.
+In all configs below, use the resolved absolute path — never `~` or `$HOME`
+(shell variables don't expand inside JSON/TOML values).
+
+**Resolve path first:**
+```bash
+SCRIPT_PATH="$(realpath "$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs")"
+echo "$SCRIPT_PATH"
+```
+
+---
+
+**Claude Code — user-scoped (available across all projects):**
+
+```bash
+claude mcp add codex-mcp --scope user -- node "$SCRIPT_PATH"
+```
+
+Or manually merge into `~/.claude.json` under `mcpServers`.
+
+---
+
+**Codex CLI — `~/.codex/config.toml`:**
+
+Merge this block (don't overwrite existing entries):
+
+```toml
+[mcp_servers.codex-mcp]
+command = "node"
+args = ["/resolved/absolute/path/to/codex-mcp-server.mjs"]
+```
+
+Or via CLI:
+
+```bash
+codex mcp add codex-mcp -- node "$SCRIPT_PATH"
+```
+
+---
+
+**Gemini CLI — `~/.gemini/settings.json`:**
+
+Merge `codex-mcp` into the `mcpServers` object:
 
 ```json
 {
   "mcpServers": {
-    "codex": {
+    "codex-mcp": {
       "command": "node",
-      "args": ["<resolved-absolute-path>/codex-mcp-server.mjs"]
+      "args": ["/resolved/absolute/path/to/codex-mcp-server.mjs"]
     }
   }
 }
 ```
 
-Use the absolute path from step 2. Relative paths will not work.
+Or via CLI:
 
-Add `memory/` to `.gitignore` if not already present:
+```bash
+gemini mcp add codex-mcp node "$SCRIPT_PATH"
+```
+
+> ⚠️ Do not use underscores in the server name (`codex-mcp` not `codex_mcp`).
+> Gemini's policy parser splits FQNs on the first `_` after `mcp_` — underscores
+> in the server name break wildcard rules silently.
+
+Tools appear as `mcp_codex-mcp_codex_run` and `mcp_codex-mcp_codex_review`.
+
+---
+
+**Cursor — `~/.cursor/mcp.json`:**
+
+Merge `codex-mcp` into the `mcpServers` object:
+
+```json
+{
+  "mcpServers": {
+    "codex-mcp": {
+      "command": "node",
+      "args": ["/resolved/absolute/path/to/codex-mcp-server.mjs"]
+    }
+  }
+}
+```
+
+---
+
+**Antigravity — `~/.gemini/antigravity/mcp_config.json`:**
+
+Merge `codex-mcp` into the `mcpServers` object:
+
+```json
+{
+  "mcpServers": {
+    "codex-mcp": {
+      "command": "node",
+      "args": ["/resolved/absolute/path/to/codex-mcp-server.mjs"]
+    }
+  }
+}
+```
+
+Access via: MCP Store → "..." → Manage MCP Servers → View raw config.
+After saving, the server connects automatically — no restart needed.
+
+---
+
+**Augment Code — GUI only:**
+
+Settings Panel → MCP section → Import from JSON → paste:
+
+```json
+{
+  "mcpServers": {
+    "codex-mcp": {
+      "command": "node",
+      "args": ["/resolved/absolute/path/to/codex-mcp-server.mjs"]
+    }
+  }
+}
+```
+
+### 3. Add `memory/` to project .gitignore (per project, not per machine)
+
+The server creates `memory/codex-threads.json` in the project root on the
+first tool call. Run this in each project that uses this skill:
 
 ```bash
 grep -q '^memory/' .gitignore 2>/dev/null || echo 'memory/' >> .gitignore
 ```
 
-### 4. Bootstrap the thread registry
+### 4. Tell the user to restart
 
-Create `memory/` and the registry file if they don't exist:
-
-```bash
-mkdir -p memory
-[ -f memory/codex-threads.json ] || echo '{"session":null,"threads":[]}' > memory/codex-threads.json
-```
-
-### 5. Tell the user to restart
-
-Say: "Codex MCP is configured. Please restart this Claude Code session (close
-and reopen) to load the Codex tools. After restart, you'll have `codex_run`
-and `codex_review` available as native tools."
+Say: "Codex MCP is configured. Please restart your agent session to load
+the Codex tools. After restart, you'll have `codex_run` and `codex_review`
+available as native tools."
 
 That's it. No other action needed from the user.
 
 ## Thread registry
 
 The MCP wrapper keeps a local registry in `memory/codex-threads.json` so
-Claude Code can route calls to the right thread by topic, not by recency.
-Unlike the earlier draft, persisted thread ids are resumable across MCP
-server restarts because the wrapper reloads them with Codex `thread/resume`.
+the orchestrating agent can route calls to the right thread by topic, not by
+recency. Persisted thread ids are resumable across MCP server restarts because
+the wrapper reloads them with Codex `thread/resume`.
 
 ### Schema
 
@@ -249,10 +379,11 @@ Task is genuinely new, no active thread covers it.
 **Case 3 — Multi-thread span.**  
 Task touches multiple active threads (e.g. integrate auth into payment).
 → Omit `thread_id` (fresh thread). Synthesize findings from both threads
-explicitly in the prompt — Claude Code already has prior outputs in context:
+explicitly in the prompt — the orchestrating agent already has prior outputs
+in context:
 
 ```
-codex_run(mode=build, prompt="""
+codex_run(mode=build, project_dir="/abs/path/to/project", prompt="""
 From auth exploration (T1): [key findings]
 From payment exploration (T2): [key findings]
 
@@ -297,7 +428,8 @@ chose MCP delegation for a reason.
 | Problem | Fix |
 |---------|-----|
 | "Codex CLI not found" | `npm install -g @openai/codex` |
-| Tools don't appear in Claude Code | Check `.mcp.json` path is absolute. Restart session. |
+| Tools don't appear in agent | Check config path is absolute. Restart agent session. |
+| Wrong project used for `memory/` | Always pass `project_dir` explicitly in tool calls. Do not rely on `process.cwd()`. |
 | Timeout errors | Increase `timeout` parameter. Break large tasks into smaller prompts. |
 | "app-server exited" | Check `~/.codex/config.toml` has a valid model. Run `codex` once interactively to verify. |
 | bwrap/sandbox errors | Expected in containers. The server uses `danger-full-access` sandbox mode by default. |
@@ -308,16 +440,17 @@ chose MCP delegation for a reason.
 ## Architecture
 
 ```
-Claude Code
+Agent (Claude Code / Gemini CLI / Cursor / Codex CLI / Antigravity / Augment)
   └─ MCP protocol (stdio)
-      └─ codex-mcp-server.mjs
+      └─ codex-mcp-server.mjs  (~/.local/share/codex-mcp/scripts/)
           ├─ runServers map    (per projectDir, codex_run threads)
           ├─ reviewServers map (per projectDir, codex_review threads, isolated)
           └─ Codex app-server (JSON-RPC over stdio)
               └─ GPT model (reads, writes, executes)
 
-memory/codex-threads.json
-  └─ thread registry (topic-based routing, managed by Claude Code)
+<project-root>/memory/codex-threads.json
+  └─ thread registry (topic-based routing, managed by the orchestrating agent)
+     created automatically on first tool call, isolated per project
 ```
 
 The MCP server spawns one app-server process per namespace per project
