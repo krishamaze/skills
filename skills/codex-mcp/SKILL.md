@@ -46,6 +46,21 @@ evaluates independently without self-review bias.
 
 If the tools are NOT available, run the setup below.
 
+## Non-Negotiable Workflow
+
+When this skill is invoked, follow this contract strictly:
+
+1. Do not proceed with the user's actual task through direct local work.
+2. First check whether `codex_run` / `codex_review` are already available.
+3. If the tools are missing, do only the setup workflow in this skill.
+4. During setup, do read-only detection first and stop for explicit user
+   permission before any install, copy, config write, or `.gitignore` edit.
+5. If the user does not approve setup changes, stop. Do not bypass MCP by
+   reading files, editing code, or running the task directly yourself.
+6. After setup, tell the user to restart the agent session and wait for the
+   restarted session to use the MCP tools. Do not continue the original task
+   in the same non-MCP turn.
+
 ## What this does
 
 Two MCP tools wrapping Codex app-server. Each call bakes in a role prefix —
@@ -80,59 +95,104 @@ When this skill triggers, run these steps. The script is installed globally
 once per machine — all agents and all projects share the same installation.
 `memory/` is created per-project automatically on first tool call.
 
-### 0. Deploy the MCP server script globally (one-time per machine)
+**Platform notes:**
+- Unix-like examples below use `$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs`
+- Windows uses `%USERPROFILE%\.local\share\codex-mcp\scripts\codex-mcp-server.mjs`
+- Prefer the agent CLIs (`claude mcp add`, `codex mcp add`, `gemini mcp add`) over manual config edits when available. They pick the correct config file for the current platform more reliably than hard-coded paths.
 
-Check if already installed:
+### 0. Read-only preflight only
+
+Before writing anything, gather all of the following facts read-only:
+- whether the installed global script already exists
+- whether the skill source script exists
+- whether `codex` is installed
+- whether `.codex/config.toml` exists and contains a `model = "..."` line
+- which supported agents appear to be installed
+
+Do not install, copy, edit, or append anything during this step.
+
+Check if already installed.
+
+**Unix / macOS:**
 
 ```bash
 ls "$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs" 2>/dev/null && echo "EXISTS" || echo "MISSING"
 ```
 
-If MISSING, check the skill source:
+**Windows PowerShell:**
+
+```powershell
+if (Test-Path "$env:USERPROFILE\.local\share\codex-mcp\scripts\codex-mcp-server.mjs") { "EXISTS" } else { "MISSING" }
+```
+
+If MISSING, check the skill source.
+
+**Unix / macOS:**
 
 ```bash
 ls <skill-dir>/scripts/codex-mcp-server.mjs 2>/dev/null && echo "EXISTS" || echo "MISSING"
 ```
 
+**Windows PowerShell:**
+
+```powershell
+if (Test-Path "<skill-dir>\scripts\codex-mcp-server.mjs") { "EXISTS" } else { "MISSING" }
+```
+
 If skill source is also MISSING, the user must provide `codex-mcp-server.mjs`.
 Do not proceed until it exists.
 
-Install globally:
-
-```bash
-mkdir -p "$HOME/.local/share/codex-mcp/scripts"
-cp <skill-dir>/scripts/codex-mcp-server.mjs "$HOME/.local/share/codex-mcp/scripts/"
-echo "Installed: $HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs"
-```
-
-If already EXISTS and the user is not explicitly reinstalling, skip this step.
-
 ### 1. Check prerequisites
+
+**Unix / macOS:**
 
 ```bash
 which codex || echo "MISSING"
 grep '^model' ~/.codex/config.toml 2>/dev/null || echo "MISSING"
 ```
 
-If codex is missing: `npm install -g @openai/codex`
-If config is missing: tell the user to run `codex` once interactively to
-complete setup, then come back.
+**Windows PowerShell:**
 
-### 2. Configure agents globally (one-time per machine)
+```powershell
+$codex = Get-Command codex -ErrorAction SilentlyContinue
+if ($codex) { $codex.Source } else { "MISSING" }
+if (Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern '^\s*model\s*=' -ErrorAction SilentlyContinue) { "MODEL_PRESENT" } else { "MISSING" }
+```
 
-The script is at `$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs`.
+If codex is missing, the setup plan must include: `npm install -g @openai/codex`
+If config is missing: do not assume the only fix is "run `codex` once
+interactively". On Windows, `codex mcp add ...` may create
+`%USERPROFILE%\.codex\config.toml` directly. The real requirement is:
+before the first tool call, `.codex/config.toml` must exist and contain a
+valid `model = "..."` line. Running `codex` interactively is one way to get
+there, not the only way.
+
+### 2. Present findings and wait for explicit permission
+
+After preflight, report:
+- what already exists
+- what is missing
+- which files or configs you intend to write
+- which agent CLIs/configs you intend to touch
+
+Then stop and ask for explicit user confirmation.
+
+Do not:
+- deploy the wrapper
+- install Codex CLI
+- run `claude mcp add`, `codex mcp add`, or `gemini mcp add`
+- edit any config file
+- append `memory/` to `.gitignore`
+
+until the user explicitly approves.
+
+### 3. Configure agents globally (one-time per machine, only after approval)
+
+The script is at `$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs`
+on Unix-like systems and
+`%USERPROFILE%\.local\share\codex-mcp\scripts\codex-mcp-server.mjs` on Windows.
 All agent configs point to this stable path. Configure only the agents the
 user has installed.
-
-**Detect installed agents:**
-
-```bash
-which claude   2>/dev/null && echo "CLAUDE_CODE=yes"  || echo "CLAUDE_CODE=no"
-which codex    2>/dev/null && echo "CODEX_CLI=yes"    || echo "CODEX_CLI=no"
-which gemini   2>/dev/null && echo "GEMINI_CLI=yes"   || echo "GEMINI_CLI=no"
-[ -d "$HOME/.cursor" ]                       && echo "CURSOR=yes"      || echo "CURSOR=no"
-[ -f "$HOME/.gemini/antigravity/mcp_config.json" ] && echo "ANTIGRAVITY=yes" || echo "ANTIGRAVITY=no"
-```
 
 Report findings, pause, confirm before writing. Example:
 
@@ -140,7 +200,7 @@ Report findings, pause, confirm before writing. Example:
 Detected agents:
   ✅ Claude Code   → configure via: claude mcp add --scope user
   ✅ Codex CLI     → configure via: ~/.codex/config.toml
-  ✅ Gemini CLI    → configure via: ~/.gemini/settings.json
+  ✅ Gemini CLI    → configure via: gemini mcp add (user-global or project-local settings)
   ❌ Cursor        → not detected
   ✅ Antigravity   → configure via: ~/.gemini/antigravity/mcp_config.json
   ℹ️  Augment Code  → GUI only, show snippet
@@ -152,10 +212,35 @@ Wait for confirmation, then write only confirmed agents.
 In all configs below, use the resolved absolute path — never `~` or `$HOME`
 (shell variables don't expand inside JSON/TOML values).
 
-**Resolve path first:**
+If the installed wrapper script was missing during preflight, deploy it now.
+
+**Unix / macOS:**
+
+```bash
+mkdir -p "$HOME/.local/share/codex-mcp/scripts"
+cp <skill-dir>/scripts/codex-mcp-server.mjs "$HOME/.local/share/codex-mcp/scripts/"
+echo "Installed: $HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs"
+```
+
+**Windows PowerShell:**
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\share\codex-mcp\scripts" | Out-Null
+Copy-Item "<skill-dir>\scripts\codex-mcp-server.mjs" "$env:USERPROFILE\.local\share\codex-mcp\scripts\codex-mcp-server.mjs" -Force
+Write-Output "Installed: $env:USERPROFILE\.local\share\codex-mcp\scripts\codex-mcp-server.mjs"
+```
+
+**Resolve path first. Unix / macOS:**
 ```bash
 SCRIPT_PATH="$(realpath "$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs")"
 echo "$SCRIPT_PATH"
+```
+
+**Windows PowerShell:**
+
+```powershell
+$SCRIPT_PATH = (Resolve-Path "$env:USERPROFILE\.local\share\codex-mcp\scripts\codex-mcp-server.mjs").Path
+$SCRIPT_PATH
 ```
 
 ---
@@ -188,9 +273,21 @@ codex mcp add codex-mcp -- node "$SCRIPT_PATH"
 
 ---
 
-**Gemini CLI — `~/.gemini/settings.json`:**
+**Gemini CLI — usually `~/.gemini/settings.json`, but some installs write project-local `.gemini/settings.json`:**
 
-Merge `codex-mcp` into the `mcpServers` object:
+Prefer the CLI first:
+
+```bash
+gemini mcp add codex-mcp node "$SCRIPT_PATH"
+```
+
+Depending on Gemini CLI version and how it was invoked, that command may
+update either:
+- user-global `~/.gemini/settings.json`
+- project-local `.gemini/settings.json`
+
+If editing manually, update whichever settings file the CLI is already using
+and merge `codex-mcp` into the `mcpServers` object:
 
 ```json
 {
@@ -201,12 +298,6 @@ Merge `codex-mcp` into the `mcpServers` object:
     }
   }
 }
-```
-
-Or via CLI:
-
-```bash
-gemini mcp add codex-mcp node "$SCRIPT_PATH"
 ```
 
 > ⚠️ Do not use underscores in the server name (`codex-mcp` not `codex_mcp`).
@@ -269,22 +360,32 @@ Settings Panel → MCP section → Import from JSON → paste:
 }
 ```
 
-### 3. Add `memory/` to project .gitignore (per project, not per machine)
+### 4. Add `memory/codex-threads.json` to project .gitignore (per project, not per machine, only after approval)
 
 The server creates `memory/codex-threads.json` in the project root on the
 first tool call. Run this in each project that uses this skill:
+
+**Unix / macOS:**
 
 ```bash
 grep -q '^memory/' .gitignore 2>/dev/null || echo 'memory/' >> .gitignore
 ```
 
-### 4. Tell the user to restart
+**Windows PowerShell:**
+
+```powershell
+if (-not (Test-Path ".gitignore")) { New-Item -ItemType File ".gitignore" | Out-Null }
+if (-not (Select-String -Path ".gitignore" -Pattern '^memory/$' -Quiet -ErrorAction SilentlyContinue)) { Add-Content ".gitignore" "memory/" }
+```
+
+### 5. Tell the user to restart and stop there
 
 Say: "Codex MCP is configured. Please restart your agent session to load
 the Codex tools. After restart, you'll have `codex_run` and `codex_review`
 available as native tools."
 
-That's it. No other action needed from the user.
+That's it. Do not continue the original task in the same session unless the
+MCP tools are already available and loaded.
 
 ## Thread registry
 
@@ -421,7 +522,8 @@ If `codex_run` fails or times out:
 3. Tell the user what failed and why, so they can decide next steps
 
 Never silently switch to reading files or running commands yourself. The user
-chose MCP delegation for a reason.
+chose MCP delegation for a reason, and invoking this skill means the agent
+must stay inside this workflow.
 
 ## Troubleshooting
 
@@ -431,11 +533,25 @@ chose MCP delegation for a reason.
 | Tools don't appear in agent | Check config path is absolute. Restart agent session. |
 | Wrong project used for `memory/` | Always pass `project_dir` explicitly in tool calls. Do not rely on `process.cwd()`. |
 | Timeout errors | Increase `timeout` parameter. Break large tasks into smaller prompts. |
-| "app-server exited" | Check `~/.codex/config.toml` has a valid model. Run `codex` once interactively to verify. |
+| "app-server exited" | Check `.codex/config.toml` has a valid model. If needed, run `codex` once interactively to verify the CLI itself works, but do not assume interactive setup is the only valid fix. |
+| `Transport closed` on Windows | Run the wrapper directly with `node <installed-path>\\codex-mcp-server.mjs` and run `codex app-server ...` directly. If both start but the client still fails on `tools/call`, inspect wrapper stderr for the child-process launch details around `spawn(CODEX_BIN, ["app-server", ...])`. |
 | bwrap/sandbox errors | Expected in containers. The server uses `danger-full-access` sandbox mode by default. |
 | Thread state lost after restart | Expected — server state is in-memory. Registry staleness check (Step 0) handles this automatically. |
 | Wrong thread routed | Check `memory/codex-threads.json`. Topics are human-readable — correct a wrong entry manually. |
 | Cross-namespace thread_id error | You passed a review thread_id to codex_run or vice versa. Check registry status column. |
+
+### Windows-first troubleshooting
+
+Before concluding Windows config is wrong, verify the two processes separately:
+
+1. Run the wrapper directly:
+   `node C:\Users\<user>\.local\share\codex-mcp\scripts\codex-mcp-server.mjs`
+2. Run Codex app-server directly:
+   `codex app-server --enable multi_agent --enable fast_mode -c service_tier="fast" -c sandbox_mode="danger-full-access" -c approval_policy="never"`
+3. If both commands start cleanly but MCP tool calls still fail, inspect the
+   wrapper's stderr around the `spawn(CODEX_BIN, ["app-server", ...])` path.
+   Windows installs often resolve `codex` to a shim, so child-process launch
+   details matter more than the agent UI's generic `Transport closed` message.
 
 ## Architecture
 

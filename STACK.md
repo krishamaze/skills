@@ -66,3 +66,13 @@
 **Never:** Call the installed `skills/codex-mcp` skill as if it still exposed the old 6-tool v1 surface.
 **Why:** The installed copy was promoted to the patched v2 interface and now exposes only `codex_run` and `codex_review`. Old callers targeting removed names will fail at `tools/list`/`tools/call`, even though the server itself is healthy.
 **Instead:** Route execution through `codex_run` with an explicit `mode`, and use `codex_review` only for review threads.
+
+### Windows codex shim spawn assumptions
+**Never:** Assume the path returned by `where codex` can always be spawned directly on Windows, or treat a clean wrapper startup as proof that the first MCP tool call will work.
+**Why:** Windows npm installs commonly resolve `codex` to a `.cmd` shim. Without shell-aware spawn handling and a `proc.on("error")` path, the wrapper can appear enabled in the client UI but die on the first `tools/call`, surfacing only `Transport closed`.
+**Instead:** Detect `.cmd`/`.bat` launchers, use shell-aware spawning on Windows, and log child-process start/close/error details to `stderr` so launch failures become diagnosable instead of opaque transport drops.
+
+### codex-mcp invocation bypass
+**Never:** When `codex-mcp` is explicitly invoked, continue the user's task via direct local work or perform setup writes before explicit approval.
+**Why:** The user invoked the skill to force MCP delegation and its setup workflow. Bypassing that contract defeats the point of the skill, mixes execution modes, and can mutate configs before the user has approved the install path.
+**Instead:** Do a read-only preflight, present findings, wait for explicit permission before any install or config write, and if MCP tools still are not available then stop rather than doing the task directly.

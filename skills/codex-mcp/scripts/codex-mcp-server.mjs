@@ -34,6 +34,28 @@ function getModel() {
 
 const CODEX_BIN = resolveCodexPath();
 const DANGEROUS = /rm\s+-rf\s+[/~]|DROP\s+TABLE|format\s+C:|\bshutdown\b|\breboot\b/i;
+const SHOULD_LOG_APP_SERVER = process.platform === "win32";
+
+function shouldUseShell(commandPath) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath || "");
+}
+
+function formatLaunch(command, args, useShell) {
+  const parts = [command, ...args].map((part) => JSON.stringify(String(part)));
+  return `${useShell ? "[shell] " : ""}${parts.join(" ")}`;
+}
+
+function stderrTail(stderr, maxLines = 20) {
+  const trimmed = stderr.trim();
+  if (!trimmed) return "";
+  const lines = trimmed.split(/\r?\n/);
+  return lines.slice(-maxLines).join("\n");
+}
+
+function logAppServer(message) {
+  if (!SHOULD_LOG_APP_SERVER) return;
+  process.stderr.write(`[codex-mcp] ${message}\n`);
+}
 
 // --- App-server process pools (separate namespaces for run vs review) ---
 const runServers    = new Map(); // projectDir → server (for codex_run)
@@ -157,20 +179,50 @@ function resumeThread(server, threadId) {
   });
 }
 
+function failServer(serverMap, key, server, message) {
+  if (server.failed) return;
+  server.failed = true;
+  serverMap.delete(key);
+  logAppServer(message);
+
+  if (!server.ready) {
+    server.readyReject?.(new Error(message));
+  }
+
+  for (const pendingThread of server.pendingThreadStarts.values()) {
+    pendingThread.reject(new Error(message));
+  }
+  server.pendingThreadStarts.clear();
+
+  for (const pending of server.pending.values()) {
+    if (!pending.done) {
+      pending.errors.push(message);
+      completeTurn(pending);
+    }
+  }
+}
+
 function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", approvalPolicy = "never") {
   if (serverMap.has(projectDir)) return serverMap.get(projectDir);
   const key = projectDir;
-
-  const proc = spawn(CODEX_BIN, [
+  const appServerArgs = [
     "app-server",
     "--enable", "multi_agent",
     "--enable", "fast_mode",
     "-c", "service_tier=\"fast\"",
     "-c", `sandbox_mode="${sandboxMode}"`,
     "-c", `approval_policy="${approvalPolicy}"`,
-  ], {
+  ];
+  const useShell = shouldUseShell(CODEX_BIN);
+  const launchSummary = formatLaunch(CODEX_BIN, appServerArgs, useShell);
+
+  logAppServer(`starting app-server for ${projectDir}: ${launchSummary}`);
+
+  const proc = spawn(CODEX_BIN, appServerArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: projectDir,
+    shell: useShell,
+    windowsHide: true,
   });
 
   const rl = createInterface({ input: proc.stdout });
@@ -188,6 +240,8 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
     currentTurn: null,
     turnQueue: Promise.resolve(),
     stderr: "",
+    failed: false,
+    launchSummary,
   };
 
   // Create ready promise
@@ -213,6 +267,7 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
         .then((threadId) => {
           server.threadId = threadId;
           server.ready = true;
+          logAppServer(`app-server ready for ${projectDir}; thread ${threadId}`);
           server.readyResolve?.();
         })
         .catch((error) => {
@@ -304,26 +359,22 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
     server.stderr += chunk.toString();
   });
 
-  proc.on("close", (code) => {
-    serverMap.delete(key);
-    if (!server.ready) {
-      const stderr = server.stderr.trim();
-      const detail = stderr ? `: ${stderr}` : "";
-      server.readyReject?.(new Error(`app-server exited during startup (code ${code})${detail}`));
-    }
+  proc.on("error", (error) => {
+    const detail = `app-server failed to start for ${projectDir}: ${server.launchSummary}; ${error.message}`;
+    failServer(serverMap, key, server, detail);
+  });
 
-    for (const pendingThread of server.pendingThreadStarts.values()) {
-      pendingThread.reject(new Error(`app-server exited before thread/start completed (code ${code})`));
-    }
-    server.pendingThreadStarts.clear();
-
-    // Fail all pending turns
-    for (const pending of server.pending.values()) {
-      if (!pending.done) {
-        pending.errors.push(`app-server exited (code ${code})`);
-        completeTurn(pending);
-      }
-    }
+  proc.on("close", (code, signal) => {
+    const stderr = stderrTail(server.stderr);
+    const status = signal ? `signal ${signal}` : `code ${code}`;
+    const detail = stderr ? `; stderr tail:\n${stderr}` : "";
+    const phase = server.ready ? "exited" : "exited during startup";
+    failServer(
+      serverMap,
+      key,
+      server,
+      `app-server ${phase} for ${projectDir} (${status}): ${server.launchSummary}${detail}`
+    );
   });
 
   // Start handshake
