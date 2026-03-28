@@ -57,7 +57,13 @@ When this skill is invoked, follow this contract strictly:
    permission before any install, copy, config write, or `.gitignore` edit.
 5. If the user does not approve setup changes, stop. Do not bypass MCP by
    reading files, editing code, or running the task directly yourself.
-6. After setup, tell the user to restart the agent session and wait for the
+6. Configure only the invoking agent by default. Do not modify other agent
+   configs unless the user explicitly asks for multi-agent setup.
+7. Treat `skills/` as the editable source of truth. Do not patch
+   `.agents/skills/` install artifacts directly; the user refreshes those with
+   `npx skills add krishamaze/skills`, which manages the install/symlink
+   behavior.
+8. After setup, tell the user to restart the agent session and wait for the
    restarted session to use the MCP tools. Do not continue the original task
    in the same non-MCP turn.
 
@@ -100,6 +106,7 @@ once per machine — all agents and all projects share the same installation.
 - Windows uses `%USERPROFILE%\.local\share\codex-mcp\scripts\codex-mcp-server.mjs`
 - Prefer the agent CLIs (`claude mcp add`, `codex mcp add`, `gemini mcp add`) over manual config edits when available. They pick the correct config file for the current platform more reliably than hard-coded paths.
 
+
 ### 0. Read-only preflight only
 
 Before writing anything, gather all of the following facts read-only:
@@ -107,9 +114,14 @@ Before writing anything, gather all of the following facts read-only:
 - whether the skill source script exists
 - whether `codex` is installed
 - whether `.codex/config.toml` exists and contains a `model = "..."` line
-- which supported agents appear to be installed
+- which agent is invoking this skill right now
+- which config file or CLI belongs to that invoking agent
 
 Do not install, copy, edit, or append anything during this step.
+
+Infer the invoking agent from the current runtime/context when possible. If
+that identity is ambiguous, ask the user which client to configure. Do not
+configure every detected agent as a fallback.
 
 Check if already installed.
 
@@ -173,7 +185,7 @@ After preflight, report:
 - what already exists
 - what is missing
 - which files or configs you intend to write
-- which agent CLIs/configs you intend to touch
+- which invoking-agent CLI/config you intend to touch
 
 Then stop and ask for explicit user confirmation.
 
@@ -186,18 +198,18 @@ Do not:
 
 until the user explicitly approves.
 
-### 3. Configure agents globally (one-time per machine, only after approval)
+### 3. Configure only the invoking agent (one-time per machine, only after approval)
 
 The script is at `$HOME/.local/share/codex-mcp/scripts/codex-mcp-server.mjs`
 on Unix-like systems and
 `%USERPROFILE%\.local\share\codex-mcp\scripts\codex-mcp-server.mjs` on Windows.
-All agent configs point to this stable path. Configure only the agents the
-user has installed.
+Agent configs point to this stable path. Configure only the invoking agent.
+Do not touch other agent configs unless the user explicitly asks for them.
 
 Report findings, pause, confirm before writing. Example:
 
 ```
-Detected agents:
+Invoking agent: Claude Code
   ✅ Claude Code   → configure via: claude mcp add --scope user
   ✅ Codex CLI     → configure via: ~/.codex/config.toml
   ✅ Gemini CLI    → configure via: gemini mcp add (user-global or project-local settings)
@@ -208,7 +220,7 @@ Detected agents:
 Proceed?
 ```
 
-Wait for confirmation, then write only confirmed agents.
+Wait for confirmation, then write only the approved invoking-agent config.
 In all configs below, use the resolved absolute path — never `~` or `$HOME`
 (shell variables don't expand inside JSON/TOML values).
 
@@ -247,6 +259,8 @@ $SCRIPT_PATH
 
 **Claude Code — user-scoped (available across all projects):**
 
+Run this section only if the invoking agent is Claude Code.
+
 ```bash
 claude mcp add codex-mcp --scope user -- node "$SCRIPT_PATH"
 ```
@@ -256,6 +270,8 @@ Or manually merge into `~/.claude.json` under `mcpServers`.
 ---
 
 **Codex CLI — `~/.codex/config.toml`:**
+
+Run this section only if the invoking agent is Codex CLI.
 
 Merge this block (don't overwrite existing entries):
 
@@ -274,6 +290,8 @@ codex mcp add codex-mcp -- node "$SCRIPT_PATH"
 ---
 
 **Gemini CLI — usually `~/.gemini/settings.json`, but some installs write project-local `.gemini/settings.json`:**
+
+Run this section only if the invoking agent is Gemini CLI.
 
 Prefer the CLI first:
 
@@ -310,6 +328,8 @@ Tools appear as `mcp_codex-mcp_codex_run` and `mcp_codex-mcp_codex_review`.
 
 **Cursor — `~/.cursor/mcp.json`:**
 
+Run this section only if the invoking agent is Cursor.
+
 Merge `codex-mcp` into the `mcpServers` object:
 
 ```json
@@ -326,6 +346,8 @@ Merge `codex-mcp` into the `mcpServers` object:
 ---
 
 **Antigravity — `~/.gemini/antigravity/mcp_config.json`:**
+
+Run this section only if the invoking agent is Antigravity.
 
 Merge `codex-mcp` into the `mcpServers` object:
 
@@ -347,6 +369,8 @@ After saving, the server connects automatically — no restart needed.
 
 **Augment Code — GUI only:**
 
+Run this section only if the invoking agent is Augment Code.
+
 Settings Panel → MCP section → Import from JSON → paste:
 
 ```json
@@ -360,7 +384,7 @@ Settings Panel → MCP section → Import from JSON → paste:
 }
 ```
 
-### 4. Add `memory/codex-threads.json` to project .gitignore (per project, not per machine, only after approval)
+### 4. Add only `memory/codex-threads.json` to project .gitignore (per project, not per machine, only after approval)
 
 The server creates `memory/codex-threads.json` in the project root on the
 first tool call. Run this in each project that uses this skill:
@@ -368,14 +392,14 @@ first tool call. Run this in each project that uses this skill:
 **Unix / macOS:**
 
 ```bash
-grep -q '^memory/' .gitignore 2>/dev/null || echo 'memory/' >> .gitignore
+grep -q '^memory/codex-threads\.json$' .gitignore 2>/dev/null || echo 'memory/codex-threads.json' >> .gitignore
 ```
 
 **Windows PowerShell:**
 
 ```powershell
 if (-not (Test-Path ".gitignore")) { New-Item -ItemType File ".gitignore" | Out-Null }
-if (-not (Select-String -Path ".gitignore" -Pattern '^memory/$' -Quiet -ErrorAction SilentlyContinue)) { Add-Content ".gitignore" "memory/" }
+if (-not (Select-String -Path ".gitignore" -Pattern '^memory/codex-threads\.json$' -Quiet -ErrorAction SilentlyContinue)) { Add-Content ".gitignore" "memory/codex-threads.json" }
 ```
 
 ### 5. Tell the user to restart and stop there

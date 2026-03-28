@@ -76,3 +76,13 @@
 **Never:** When `codex-mcp` is explicitly invoked, continue the user's task via direct local work or perform setup writes before explicit approval.
 **Why:** The user invoked the skill to force MCP delegation and its setup workflow. Bypassing that contract defeats the point of the skill, mixes execution modes, and can mutate configs before the user has approved the install path.
 **Instead:** Do a read-only preflight, present findings, wait for explicit permission before any install or config write, and if MCP tools still are not available then stop rather than doing the task directly.
+
+### codex-mcp multi-agent overconfiguration
+**Never:** When `codex-mcp` setup is invoked, configure every detected agent by default.
+**Why:** The active agent should know which client it is serving. Touching unrelated agent configs widens blast radius, creates unnecessary writes, and solves a broader problem than the user asked for.
+**Instead:** Configure only the invoking agent by default. Touch other agent configs only if the user explicitly asks for multi-agent setup.
+
+### codex-mcp gitignore scope
+**Never:** Add `memory/` to `.gitignore` when the intended ignore target is only the Codex thread registry file.
+**Why:** Ignoring the whole directory hides unrelated project files that may later live under `memory/`. The actual wrapper artifact that needs ignoring is `memory/codex-threads.json`.
+**Instead:** Append only `memory/codex-threads.json`.

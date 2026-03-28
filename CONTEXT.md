@@ -2,16 +2,16 @@
 **Updated:** 2026-03-28
 
 ## Current Layer
-Skills repo — `skills/codex-mcp` strict invocation and permission-gated setup workflow. Status: verified
+Skills repo — `skills/codex-mcp` strict invocation, current-agent-only setup, narrow gitignore rule, and repo-only source-of-truth editing. Status: verified
 
 ## Last Completed
-Patched both the tracked [skills/codex-mcp](/home/ubuntu/projects/3_RESOURCES/skills/skills/codex-mcp) source and the live [`.agents/skills/codex-mcp`](/home/ubuntu/projects/3_RESOURCES/skills/.agents/skills/codex-mcp) copy so invocation now enforces a strict MCP-only workflow: read-only preflight first, explicit user approval before any install or config write, no direct task execution when tools are missing, and stop-after-restart guidance.
+Revised the tracked [skills/codex-mcp](/home/ubuntu/projects/3_RESOURCES/skills/skills/codex-mcp) source so future agents treat `skills/` as the only editable source of truth, configure only the invoking agent unless the user explicitly asks for more, and write only `memory/codex-threads.json` to `.gitignore`. Installed `.agents/skills/` copies are user-managed and should be refreshed via `npx skills add krishamaze/skills`, not edited directly by an agent.
 
 ## Active Blocker
 No live Windows reproduction in this Linux workspace, so the wrapper fix remains syntax-checked and source-level reasoned, not end-to-end Windows-validated.
 
 ## Next Action
-If desired, run one real Windows MCP tool call against the patched wrapper, then commit the docs plus wrapper changes together as the stricter `codex-mcp` contract.
+If desired, run one real Windows MCP tool call against the patched wrapper, then commit the docs plus wrapper changes together as the stricter current-agent-only `codex-mcp` contract. The user can refresh installed `.agents/skills/` state separately with `npx skills add krishamaze/skills`.
 
 ## Deferred
 - Decide whether to add a Windows CI or fixture-based regression for the `codex.cmd` launch path instead of relying on manual validation.
