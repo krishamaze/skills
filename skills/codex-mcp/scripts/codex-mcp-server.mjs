@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // MCP server wrapping Codex app-server — zero external dependencies
-// Exposes codex_execute, codex_resume, codex_review as MCP tools
+// Exposes codex_run (modes: explore|inspect|build|debug|test|research) and codex_review as MCP tools
 import { execSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { resolve, join } from "node:path";
 
 // --- Resolve codex binary ---
 function resolveCodexPath() {
@@ -34,8 +34,86 @@ function getModel() {
 const CODEX_BIN = resolveCodexPath();
 const DANGEROUS = /rm\s+-rf\s+[/~]|DROP\s+TABLE|format\s+C:|shutdown|reboot/i;
 
-// --- App-server process pool (one per projectDir) ---
-const servers = new Map(); // projectDir → { proc, rl, threadId, ready, pending }
+// --- App-server process pools (separate namespaces for run vs review) ---
+const runServers    = new Map(); // projectDir → server (for codex_run)
+const reviewServers = new Map(); // projectDir → server (for codex_review)
+const reviewThreadIds = new Set(); // threadIds that belong to review namespace
+
+// --- Thread registry (memory/codex-threads.json per project) ---
+const initializedDirs = new Set();
+
+function registryFile(projectDir) {
+  return join(projectDir, "memory", "codex-threads.json");
+}
+
+function readRegistry(projectDir) {
+  const file = registryFile(projectDir);
+  let registry = { session: null, threads: [] };
+  try { registry = JSON.parse(readFileSync(file, "utf8")); } catch {}
+  if (!Array.isArray(registry.threads)) registry.threads = [];
+  return registry;
+}
+
+function writeRegistry(projectDir, registry) {
+  const dir = join(projectDir, "memory");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(registryFile(projectDir), JSON.stringify(registry, null, 2));
+}
+
+function initRegistry(projectDir) {
+  if (initializedDirs.has(projectDir)) return;
+  initializedDirs.add(projectDir);
+  const registry = readRegistry(projectDir);
+  for (const thread of registry.threads) {
+    if (thread?.tool === "codex_review" && thread.thread_id) {
+      reviewThreadIds.add(thread.thread_id);
+    }
+  }
+  registry.session = new Date().toISOString();
+  writeRegistry(projectDir, registry);
+}
+
+// Parses CODEX_THREAD line from output without stripping — line stays visible to orchestrator
+function parseThreadSummary(output) {
+  const match = output.match(/\nCODEX_THREAD:\s*([^|\n]+?)\s*\|\s*(.+)$/m);
+  if (!match) return { topic: null, summary: null };
+  return { topic: match[1].trim(), summary: match[2].trim() };
+}
+
+function upsertThread(projectDir, { thread_id, tool, mode, status, topic, summary }) {
+  let registry = readRegistry(projectDir);
+  registry.session = new Date().toISOString();
+  const existing = registry.threads.find(t => t.thread_id === thread_id);
+  if (existing) {
+    // Codex re-labelled the task — update topic and summary, preserve status (orchestrator owns that)
+    existing.tool = tool;
+    existing.mode = mode || null;
+    existing.status = status;
+    if (topic) existing.topic = topic;
+    if (summary) existing.summary = summary;
+    existing.updated_at = new Date().toISOString();
+  } else {
+    registry.threads.push({
+      thread_id,
+      tool,
+      mode: mode || null,
+      topic: topic || null,
+      summary: summary || null,
+      status,
+      created_at: new Date().toISOString(),
+    });
+  }
+  if (tool === "codex_review") {
+    reviewThreadIds.add(thread_id);
+  } else {
+    reviewThreadIds.delete(thread_id);
+  }
+  writeRegistry(projectDir, registry);
+}
+
+function getThreadRecord(projectDir, threadId) {
+  return readRegistry(projectDir).threads.find((t) => t.thread_id === threadId) || null;
+}
 
 function getChangedPaths(params = {}) {
   const directPaths = [
@@ -61,17 +139,28 @@ function getChangedPaths(params = {}) {
 function startThread(server, params = {}) {
   const requestId = server.nextId();
   return new Promise((resolve, reject) => {
-    server.pendingThreadStarts.set(requestId, { resolve, reject });
+    server.pendingThreadStarts.set(requestId, { resolve, reject, method: "thread/start" });
     server.send({ method: "thread/start", id: requestId, params });
   });
 }
 
-function spawnServer(projectDir, sandboxMode = "danger-full-access", approvalPolicy = "never") {
+function resumeThread(server, threadId) {
+  const requestId = server.nextId();
+  return new Promise((resolve, reject) => {
+    server.pendingThreadStarts.set(requestId, { resolve, reject, method: "thread/resume" });
+    server.send({ method: "thread/resume", id: requestId, params: { threadId } });
+  });
+}
+
+function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", approvalPolicy = "never") {
+  if (serverMap.has(projectDir)) return serverMap.get(projectDir);
   const key = projectDir;
-  if (servers.has(key)) return servers.get(key);
 
   const proc = spawn(CODEX_BIN, [
     "app-server",
+    "--enable", "multi_agent",
+    "--enable", "fast_mode",
+    "-c", "service_tier=\"fast\"",
     "-c", `sandbox_mode="${sandboxMode}"`,
     "-c", `approval_policy="${approvalPolicy}"`,
   ], {
@@ -133,13 +222,13 @@ function spawnServer(projectDir, sandboxMode = "danger-full-access", approvalPol
       server.pendingThreadStarts.delete(msg.id);
 
       if (msg.error) {
-        pendingThread.reject(new Error(`thread/start failed: ${JSON.stringify(msg.error)}`));
+        pendingThread.reject(new Error(`${pendingThread.method} failed: ${JSON.stringify(msg.error)}`));
         return;
       }
 
       const nextThreadId = msg.result?.thread?.id || msg.result?.id || null;
       if (!nextThreadId) {
-        pendingThread.reject(new Error(`thread/start returned no thread id: ${line}`));
+        pendingThread.reject(new Error(`${pendingThread.method} returned no thread id: ${line}`));
         return;
       }
 
@@ -152,6 +241,7 @@ function spawnServer(projectDir, sandboxMode = "danger-full-access", approvalPol
       const activeTurn = server.currentTurn;
       if (activeTurn) {
         activeTurn.errors.push(`RPC error: ${JSON.stringify(msg.error)}`);
+        completeTurn(activeTurn);
       }
       return;
     }
@@ -210,7 +300,7 @@ function spawnServer(projectDir, sandboxMode = "danger-full-access", approvalPol
   });
 
   proc.on("close", (code) => {
-    servers.delete(key);
+    serverMap.delete(key);
     if (!server.ready) {
       const stderr = server.stderr.trim();
       const detail = stderr ? `: ${stderr}` : "";
@@ -238,7 +328,7 @@ function spawnServer(projectDir, sandboxMode = "danger-full-access", approvalPol
     params: { clientInfo: { name: "codex-mcp", title: "Codex MCP Server", version: "1.0.0" } },
   });
 
-  servers.set(key, server);
+  serverMap.set(key, server);
   return server;
 }
 
@@ -255,21 +345,27 @@ function completeTurn(turn) {
     output: turn.output.trim(),
     diffs: turn.diffs,
     errors: turn.errors,
-    threadId: turn.server.threadId || turn.threadId,
+    threadId: turn.threadId,
     filesModified: uniqueFiles,
     tokenUsage: turn.tokenUsage,
   });
 }
 
 async function executeTurn(projectDir, prompt, options = {}) {
-  const { resume = false, newThread = false, timeout = 60, contextCmd = null } = options;
-  const server = spawnServer(projectDir);
+  const { threadId = null, timeout = 60, contextCmd = null, serverMap = runServers } = options;
+  const server = spawnServer(projectDir, serverMap);
   await server.readyPromise;
 
   const runTurn = async () => {
-    if (newThread && !resume) {
+    // Use provided threadId or start a new thread
+    let activeThreadId = threadId;
+    if (activeThreadId) {
+      if (server.threadId !== activeThreadId) {
+        activeThreadId = await resumeThread(server, activeThreadId);
+      }
+    } else {
       const model = getModel();
-      await startThread(server, model ? { model } : {});
+      activeThreadId = await startThread(server, model ? { model } : {});
     }
 
     // Build prompt with context
@@ -289,7 +385,7 @@ async function executeTurn(projectDir, prompt, options = {}) {
       const turn = {
         id: turnId,
         server,
-        threadId: server.threadId,
+        threadId: activeThreadId,
         output: "",
         diffs: [],
         errors: [],
@@ -313,7 +409,7 @@ async function executeTurn(projectDir, prompt, options = {}) {
         method: "turn/start",
         id: turnId,
         params: {
-          threadId: server.threadId,
+          threadId: activeThreadId,
           input: [{ type: "text", text: fullPrompt }],
         },
       });
@@ -364,65 +460,64 @@ function formatResult(result) {
   };
 }
 
-// --- Role prefixes: baked-in instructions per task type ---
-// These are prepended to the user's prompt so Codex behaves correctly
-// even if the orchestrator's skill instructions have faded from context.
+// --- Role prefixes: injected per turn so behavioral contract holds even deep in context ---
 const ROLE_PREFIX = {
-  codex_search: "You are in SEARCH mode. Read and explore only — do NOT modify, create, or delete any files. Return structured findings: file paths, function names, line numbers, and a brief summary of what you found. Be thorough but concise.",
-  codex_review: "You are in REVIEW mode. Evaluate the code independently — read the files fresh. Do NOT fix anything unless explicitly asked. List: bugs, gaps, missing edge cases, deviations from the stated requirement. Be specific with file paths and line numbers.",
-  codex_debug: "You are in DEBUG mode. Follow this sequence: (1) reproduce the issue — run the failing command or test, (2) diagnose — trace the root cause with file reads and searches, (3) fix — make the minimal change that resolves the issue, (4) verify — run the test/command again to confirm the fix works. Report each step.",
-  codex_test: "You are in TEST mode. Write or run tests as requested. Cover edge cases and failure modes, not just the happy path. After running tests, report: total passed, total failed, and list each failure with file path and assertion details.",
+  explore:  "EXPLORE MODE: Read and navigate the local codebase only. Treat any attempt to write, create, or delete files as a hard error — stop and report it instead. Return structured findings: file paths, function names, line numbers, and a concise summary.",
+  inspect:  "INSPECT MODE: Perform targeted read-only checks using explicitly provided files, injected context, or a narrow local scope. Do NOT write, create, or delete files. If the task reads code or config, cite file paths and line numbers when relevant. If the task is driven by injected context or another explicitly provided read-only input, report that input directly and concisely.",
+  build:    "BUILD MODE: Write, edit, create, and run code. Make minimal targeted changes unless explicitly asked to refactor. After completing, state clearly what you changed and why.",
+  debug:    "DEBUG MODE: Follow this exact sequence — (1) REPRODUCE: run the failing command or test to confirm the issue. (2) DIAGNOSE: trace the root cause through file reads and searches, do not guess. (3) FIX: make the minimal change that resolves the root cause. (4) VERIFY: run the failing command or test again and confirm it passes. Report each step.",
+  test:     "TEST MODE: Write or run tests as requested. Cover edge cases and failure modes, not just the happy path. After running: report total passed, total failed, and for each failure — file path, test name, and assertion detail.",
+  research: "RESEARCH MODE: Use web search to gather current, accurate information. Do NOT write, create, or modify any files. Return a structured summary with: key findings, relevant sources with URLs, and any caveats about recency or reliability.",
 };
 
-const BASE_SCHEMA = {
+const RUN_SCHEMA = {
   type: "object",
   properties: {
-    prompt: { type: "string", description: "The task for Codex. Include file paths, function names, expected outcome." },
+    mode: {
+      type: "string",
+      enum: ["explore", "inspect", "build", "debug", "test", "research"],
+      description: "explore: broad local codebase discovery | inspect: targeted read-only or context-driven checks | build: write/edit/run code | debug: reproduce→diagnose→fix→verify | test: write/run tests | research: web search only, no file writes",
+    },
+    prompt: { type: "string", description: "The task for Codex. Include file paths, function names, expected outcome, and constraints." },
+    thread_id: { type: "string", description: "Continue an existing run thread. Omit to start a new thread. Never pass a thread_id returned by codex_review." },
+    project_dir: { type: "string", description: "Project directory. Defaults to cwd." },
+    timeout: { type: "number", description: "Inactivity timeout in seconds. Default 60." },
+    context_cmd: { type: "string", description: "Shell command whose stdout is prepended as context before the prompt." },
+  },
+  required: ["mode", "prompt"],
+};
+
+const REVIEW_SCHEMA = {
+  type: "object",
+  properties: {
+    prompt: { type: "string", description: "What to review. Always include: (1) the original requirement, (2) what was built. Codex reads code fresh — give it the context it needs to evaluate correctly." },
+    thread_id: { type: "string", description: "Continue an existing review thread for follow-up questions. Omit to start a fresh review. Never pass a thread_id returned by codex_run." },
     project_dir: { type: "string", description: "Project directory. Defaults to cwd." },
     timeout: { type: "number", description: "Inactivity timeout in seconds. Default 60." },
   },
   required: ["prompt"],
 };
 
-const EXECUTE_SCHEMA = {
-  type: "object",
-  properties: {
-    ...BASE_SCHEMA.properties,
-    context_cmd: { type: "string", description: "Shell command whose output is prepended as context." },
-  },
-  required: ["prompt"],
-};
+const REVIEW_ROLE_PREFIX = "REVIEW MODE: Evaluate the code independently — read files fresh. Do NOT fix anything. List: bugs, gaps, missing edge cases, deviations from the stated requirement. Be specific with file paths and line numbers.";
+
+// Appended to every prompt — Codex self-labels the thread. Output is NOT stripped; line is visible to orchestrator.
+const THREAD_SUFFIX = `
+
+---
+At the very end of your response, after all other content, append exactly one line in this format:
+CODEX_THREAD: {module/action} | {one sentence: what was done or found}
+Example: CODEX_THREAD: auth/map | Mapped all exported auth functions and identified 3 missing null checks`;
 
 const TOOLS = [
   {
-    name: "codex_execute",
-    description: "Send a task to Codex in a new thread. General-purpose: writing code, running commands, creating files, refactoring. Use this when no specialized tool fits. Codex is a full agent with parallel tool calls; give it focused, specific prompts.",
-    inputSchema: EXECUTE_SCHEMA,
-  },
-  {
-    name: "codex_resume",
-    description: "Follow up in the same Codex thread. Codex remembers everything from previous turns. Use for: iterative refinement, \"now do X with what you just found\", multi-step sequences, or \"undo that and try Y instead\".",
-    inputSchema: BASE_SCHEMA,
-  },
-  {
-    name: "codex_search",
-    description: "Explore and read the codebase without modifying anything. Use for: understanding code structure, finding functions, listing dependencies, answering questions about existing code. Codex reads files in parallel and returns structured findings. Always use this instead of reading files yourself.",
-    inputSchema: BASE_SCHEMA,
+    name: "codex_run",
+    description: "Send a task to Codex in the chosen mode. explore: broad codebase discovery read-only. inspect: targeted read-only or injected-context checks. build: write/edit/run code. debug: reproduce→diagnose→fix→verify a bug. test: write or run tests with edge case coverage. research: web search, no file writes. Pass thread_id to continue a previous run with full context. Omit thread_id to start fresh.",
+    inputSchema: RUN_SCHEMA,
   },
   {
     name: "codex_review",
-    description: "Independent code review in a fresh thread. Use after codex_execute to verify work — Codex reads files fresh without self-review bias. Include the original requirement in the prompt, not Codex's prior output. Reports bugs, gaps, and deviations.",
-    inputSchema: BASE_SCHEMA,
-  },
-  {
-    name: "codex_debug",
-    description: "Investigate and fix a bug. Codex will: reproduce the issue, diagnose root cause, apply minimal fix, verify the fix works. Include: the error message, failing test or command, and any context about when it started failing.",
-    inputSchema: EXECUTE_SCHEMA,
-  },
-  {
-    name: "codex_test",
-    description: "Write or run tests. Codex will cover edge cases and failure modes, not just happy paths. After running, reports pass/fail counts and failure details. Include: what to test, which test framework, and expected behavior.",
-    inputSchema: BASE_SCHEMA,
+    description: "Independent code review in an isolated thread — never shares context with codex_run threads so Codex reads code without self-review bias. Include the original requirement in the prompt. Pass thread_id to follow up within an existing review thread.",
+    inputSchema: REVIEW_SCHEMA,
   },
 ];
 
@@ -457,7 +552,6 @@ mcpRl.on("line", async (line) => {
     case "tools/call": {
       const { name, arguments: args = {} } = params || {};
 
-      // Pre-flight checks
       if (!CODEX_BIN) {
         mcpResult(id, {
           content: [{ type: "text", text: "Codex CLI not found. Install with: npm install -g @openai/codex" }],
@@ -466,7 +560,7 @@ mcpRl.on("line", async (line) => {
         break;
       }
 
-      if (!TOOLS.find((tool) => tool.name === name)) {
+      if (name !== "codex_run" && name !== "codex_review") {
         mcpError(id, -32602, `Unknown tool: ${name}`);
         break;
       }
@@ -488,27 +582,80 @@ mcpRl.on("line", async (line) => {
       const timeout = args.timeout || 60;
 
       try {
-        // Prepend role prefix if one exists for this tool
-        const prefix = ROLE_PREFIX[name];
-        const fullPrompt = prefix ? prefix + "\n\n" + args.prompt : args.prompt;
+        if (name === "codex_run") {
+          const mode = args.mode;
+          if (!ROLE_PREFIX[mode]) {
+            mcpError(id, -32602, `Invalid mode: "${mode}". Must be one of: explore, inspect, build, debug, test, research`);
+            break;
+          }
 
-        let result;
+          // Namespace isolation — reject review thread_ids in run
+          const threadRecord = args.thread_id ? getThreadRecord(projectDir, args.thread_id) : null;
+          if (args.thread_id && (threadRecord?.tool === "codex_review" || reviewThreadIds.has(args.thread_id))) {
+            mcpError(id, -32602, `thread_id "${args.thread_id}" belongs to a review thread. Use codex_review to continue it.`);
+            break;
+          }
 
-        if (name === "codex_resume") {
-          result = await executeTurn(projectDir, fullPrompt, {
-            resume: true,
+          const fullPrompt = ROLE_PREFIX[mode] + "\n\n" + args.prompt + THREAD_SUFFIX;
+          initRegistry(projectDir);
+          const result = await executeTurn(projectDir, fullPrompt, {
+            threadId: args.thread_id || null,
             timeout,
+            contextCmd: args.context_cmd || null,
+            serverMap: runServers,
           });
+
+          if (result.threadId) {
+            const { topic, summary } = parseThreadSummary(result.output);
+            upsertThread(projectDir, {
+              thread_id: result.threadId,
+              tool: "codex_run",
+              mode,
+              status: "active",
+              topic,
+              summary,
+            });
+          }
+
+          mcpResult(id, formatResult(result));
+
         } else {
-          // All other tools: new thread, optional context_cmd
-          result = await executeTurn(projectDir, fullPrompt, {
-            newThread: true,
-            timeout,
-            contextCmd: args.context_cmd,
-          });
-        }
+          // codex_review
 
-        mcpResult(id, formatResult(result));
+          // Namespace isolation — reject run thread_ids in review
+          const threadRecord = args.thread_id ? getThreadRecord(projectDir, args.thread_id) : null;
+          if (args.thread_id && threadRecord?.tool && threadRecord.tool !== "codex_review") {
+            mcpError(id, -32602, `thread_id "${args.thread_id}" belongs to a run thread. Use codex_run to continue it.`);
+            break;
+          }
+          if (args.thread_id && !threadRecord && !reviewThreadIds.has(args.thread_id)) {
+            mcpError(id, -32602, `Unknown review thread_id "${args.thread_id}". Resume only thread_ids previously returned by codex_review.`);
+            break;
+          }
+
+          const fullPrompt = REVIEW_ROLE_PREFIX + "\n\n" + args.prompt + THREAD_SUFFIX;
+          initRegistry(projectDir);
+          const result = await executeTurn(projectDir, fullPrompt, {
+            threadId: args.thread_id || null,
+            timeout,
+            serverMap: reviewServers,
+          });
+
+          // Register threadId in review namespace
+          if (result.threadId) {
+            const { topic, summary } = parseThreadSummary(result.output);
+            upsertThread(projectDir, {
+              thread_id: result.threadId,
+              tool: "codex_review",
+              mode: null,
+              status: "review",
+              topic,
+              summary,
+            });
+          }
+
+          mcpResult(id, formatResult(result));
+        }
       } catch (err) {
         mcpResult(id, {
           content: [{ type: "text", text: `Codex error: ${err.message}` }],
@@ -529,16 +676,14 @@ mcpRl.on("line", async (line) => {
 
 // Clean shutdown
 process.on("SIGINT", () => {
-  for (const server of servers.values()) {
-    server.proc.kill();
-  }
+  for (const server of runServers.values()) server.proc.kill();
+  for (const server of reviewServers.values()) server.proc.kill();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  for (const server of servers.values()) {
-    server.proc.kill();
-  }
+  for (const server of runServers.values()) server.proc.kill();
+  for (const server of reviewServers.values()) server.proc.kill();
   process.exit(0);
 });
 

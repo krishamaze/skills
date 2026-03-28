@@ -2,16 +2,18 @@
 **Updated:** 2026-03-28
 
 ## Current Layer
-Skills repo — agent-state audit + `codex-mcp` end-to-end validation. Status: verified
+Skills repo — installed `skills/codex-mcp` promoted to the patched v2 interface and smoke-validated. Status: verified
 
 ## Last Completed
-Consolidated Claude/Codex/Gemini state, confirmed the older Gemini replacement thread already landed in `07f9249`, live-tested `.mcp.json` by initializing `codex-mcp`, listing all 6 tools, and successfully calling `codex_search` plus `codex_execute`, then reconciled the worktree by keeping `skills/agent-handoff/` and `skills/agent-handoff-workspace/` untracked while removing the installed `skill-creator` and `frontend-design` copies.
+Copied the patched extracted [codex-mcp-v2](/home/ubuntu/projects/3_RESOURCES/skills/codex-mcp-v2) into [skills/codex-mcp](/home/ubuntu/projects/3_RESOURCES/skills/skills/codex-mcp) and revalidated the installed path with a live MCP smoke test: `initialize`, `tools/list`, fresh `codex_run(mode=inspect, context_cmd="pwd")`, fresh `codex_review`, server restart, resumed run thread, and resumed review thread all passed with no errors.
 
 ## Active Blocker
 None.
 
 ## Next Action
-No immediate task. Await the next repo change or prompt-trial follow-up.
+If desired, commit the installed `skills/codex-mcp` v2 upgrade and decide whether to keep or remove the untracked extracted [codex-mcp-v2](/home/ubuntu/projects/3_RESOURCES/skills/codex-mcp-v2) reference copy.
 
 ## Deferred
-- Tighten `codex-orchestrator` and `codex-mcp` trigger descriptions after more real prompt trials.
+- Decide whether to keep the untracked extracted [codex-mcp-v2](/home/ubuntu/projects/3_RESOURCES/skills/codex-mcp-v2) directory as a reference branch or remove it after commit.
+- Decide later whether the same Fast and multi-agent defaults should also live in a repo `.codex/config.toml`, or remain wrapper-only.
+- Deeper mode-specific checks for `debug`, `test`, and `research` on the installed v2 surface if broader confidence is needed.

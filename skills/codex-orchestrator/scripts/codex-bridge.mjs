@@ -72,6 +72,9 @@ if (existsSync(STATE_FILE)) {
 // --- Spawn app-server ---
 const proc = spawn(CODEX_BIN, [
   "app-server",
+  "--enable", "multi_agent",
+  "--enable", "fast_mode",
+  "-c", "service_tier=\"fast\"",
   "-c", `sandbox_mode="${sandboxMode}"`,
   "-c", `approval_policy="${approvalPolicy}"`,
 ], {

@@ -36,3 +36,33 @@
 **Never:** Assume a `.skill` archive extracts to user-writable files and directories.
 **Why:** Archive-preserved permissions left `skills/skill-creator` read-only (`dr-xr-xr-x` / `-r--r--r--`), so `rm -rf` failed with `Permission denied` even though the files were user-owned.
 **Instead:** If an extracted skill tree must be edited or deleted, restore user write bits first, for example `chmod -R u+w <dir>`, then make the change.
+
+### codex-mcp-v2 context_cmd replacement readiness
+**Never:** Treat extracted `codex-mcp-v2` as a drop-in replacement for the installed `skills/codex-mcp` before validating `codex_run` with `context_cmd`.
+**Why:** On 2026-03-28, isolated MCP tests showed v2 succeeds for handshake, `codex_run`, `codex_review`, thread continuation, and namespace isolation. The failure is narrower: `context_cmd: "pwd"` succeeds in installed v1 and in v2 `build`, but hangs in v2 `explore` for a context-only prompt because `explore` also injects a stricter "read codebase and return file paths/function names/line numbers" contract.
+**Instead:** Keep v1 installed as the reference and patch/retest [codex-mcp-v2/scripts/codex-mcp-server.mjs](/home/ubuntu/projects/3_RESOURCES/skills/codex-mcp-v2/scripts/codex-mcp-server.mjs) before any merge or replacement.
+
+### codex-mcp-v2 explore prompt softening
+**Never:** Assume a single softer `if` clause in the v2 `explore` prefix is enough to fix context-only follow-up hangs.
+**Why:** On 2026-03-28, changing the prefix to allow reporting injected read-only context preserved normal `explore` behavior, but `codex_run` with `mode: "explore"` plus `context_cmd: "pwd"` still timed out. The issue is therefore deeper than that one prompt sentence.
+**Instead:** Treat the bug as an execution-path or mode-design issue: instrument the v2 `explore` turn flow further or add a lighter dedicated read-only/context-follow-up mode before replacing v1.
+
+### codex-mcp-v2 inspect routing
+**Never:** Route injected-context follow-ups or narrow read-only checks through `explore`.
+**Why:** In extracted v2, `explore` remained good for broad codebase discovery, but context-only follow-ups kept stalling there even after prompt softening. Splitting a lighter `inspect` mode resolved the same `context_cmd: "pwd"` test immediately without weakening normal `explore`.
+**Instead:** Use `explore` for broad codebase mapping and `inspect` for targeted read-only checks on config, files, or injected context.
+
+### codex launcher ambient-default drift
+**Never:** Rely on ambient `~/.codex/config.toml` defaults alone when a local wrapper needs stable Codex behavior.
+**Why:** Wrapper behavior becomes machine- and profile-dependent. `multi_agent` can be explicitly disabled, and `service_tier = "fast"` is ignored if `fast_mode` is off in the effective feature set.
+**Instead:** Pin wrapper startup with `--enable multi_agent`, `--enable fast_mode`, and `-c service_tier="fast"`, then validate with a live `config/read` or `thread/start` probe.
+
+### codex-mcp-v2 persisted thread resume
+**Never:** Feed a persisted `thread_id` directly into `turn/start` and assume it is still live in the current app-server process.
+**Why:** Codex app-server thread ids persist on disk, but a fresh app-server must reload them first. Direct `turn/start` on a stale-but-valid thread id fails with `thread not found`, while review ids can also be misclassified if namespace state is tracked only in memory.
+**Instead:** For resumed work, reload the conversation with `thread/resume`; keep review-vs-run namespace metadata in the persisted registry, not only in an in-memory set; and complete the turn immediately on RPC errors instead of appending a misleading inactivity timeout.
+
+### installed codex-mcp v1 tool-name assumptions
+**Never:** Call the installed `skills/codex-mcp` skill as if it still exposed the old 6-tool v1 surface.
+**Why:** The installed copy was promoted to the patched v2 interface and now exposes only `codex_run` and `codex_review`. Old callers targeting removed names will fail at `tools/list`/`tools/call`, even though the server itself is healthy.
+**Instead:** Route execution through `codex_run` with an explicit `mode`, and use `codex_review` only for review threads.

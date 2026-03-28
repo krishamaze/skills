@@ -62,3 +62,17 @@
 **Why:** Static config and process startup do not prove that the wrapper can spawn Codex app-server, expose all 6 tools, and return real end-to-end results. The live handshake catches integration breakage before a user hits it in Claude Code.
 **Do not:** Mark `codex-mcp` done based only on `.mcp.json` existing or the wrapper process starting.
 **Failure mode:** Claude Code appears configured, but the first real MCP call hangs or fails because the bridge or nested Codex path is broken.
+
+## ADR-010: Codex launchers pin multi-agent and Fast defaults at process startup
+**Status:** active
+**Decision:** Every local wrapper that spawns `codex app-server` must pass `--enable multi_agent`, `--enable fast_mode`, and `-c service_tier="fast"` in its startup argv.
+**Why:** Wrapper behavior should be deterministic across machines and profiles instead of inheriting whatever the host `~/.codex/config.toml` happens to allow. `service_tier = "fast"` is the persisted Fast preference, but Fast is ignored if `fast_mode` is disabled, so both the feature and the tier must be pinned together.
+**Do not:** Assume ambient Codex defaults are good enough for wrapper behavior or try to enforce Fast only at the prompt level.
+**Failure mode:** The same wrapper behaves differently across environments, multi-agent tools may disappear, or Fast silently drops back to the default tier.
+
+## ADR-011: Installed codex-mcp uses the v2 two-tool surface
+**Status:** active
+**Decision:** The installed `skills/codex-mcp` skill now exposes only `codex_run` and `codex_review`, with run behavior selected through `mode` (`explore`, `inspect`, `build`, `debug`, `test`, `research`).
+**Why:** The v2 surface is narrower and more coherent than the old 6-tool API, and the installed copy now includes the restart-safe thread registry fixes validated on the extracted candidate before promotion.
+**Do not:** Call removed v1 tool names like `codex_execute`, `codex_resume`, `codex_search`, `codex_debug`, or `codex_test` against the installed skill.
+**Failure mode:** MCP callers target tools that no longer exist, or they bypass the validated v2 thread and mode routing contract.
