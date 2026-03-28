@@ -14,8 +14,11 @@ Thumbs.db
 skills-lock.json
 .agents/
 .claude/
+.codex/
+.mcp.json
 
 # Distribution archives
 *.skill
+*.skill.txt
 *.zip
 _reference/

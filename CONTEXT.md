@@ -1,17 +1,17 @@
 # Context
-**Updated:** 2026-03-08
+**Updated:** 2026-03-28
 
 ## Current Layer
-Skills repo — 18 skills live. Status: verified
+Skills repo — `codex-orchestrator` rewrite plus `codex-mcp` addition. Status: verified
 
 ## Last Completed
-Installed `codex-orchestrator` skill from `.skill` archive. Covers 3-tier LLM orchestration of OpenAI Codex CLI: `codex exec` (simple), `codex app-server` JSON-RPC (stateful multi-turn), and `command/exec/write` (interactive stdin / PTY passthrough).
+Stabilized `skills/codex-mcp/scripts/codex-mcp-server.mjs`, corrected the Tier 1 protocol reference, and cleaned local-only files out of the commit path.
 
 ## Active Blocker
-None
+None.
 
 ## Next Action
-Verify skill triggering accuracy for newly installed skills. Optionally run description optimization.
+Run an end-to-end Claude Code restart check to confirm the MCP tools load from `.mcp.json` and behave correctly against a real project.
 
 ## Deferred
-- Skill description optimization for gemini-api-2026 — do after test cases confirm content quality
+- Tighten `codex-orchestrator` and `codex-mcp` trigger descriptions after a few real prompt trials.

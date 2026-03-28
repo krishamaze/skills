@@ -139,12 +139,14 @@ function finish() {
   if (finished) return;
   finished = true;
   clearTimeout(inactivityTimer);
+  const uniqueFiles = [...new Set(filesModified)];
   const result = { output: output.trim(), diffs, errors, threadId, tokenUsage };
+  process.stderr.write(`[codex] done: ${uniqueFiles.length} files changed${errors.length ? `, ${errors.length} errors` : ""}\n`);
   // Save state for resume
   writeFileSync(STATE_FILE, JSON.stringify({
     threadId,
     tokenUsage: tokenUsage || null,
-    filesModified: [...new Set(filesModified)],
+    filesModified: uniqueFiles,
     turnCount: (savedState.turnCount || 0) + 1,
     lastPrompt: prompt,
     lastActivity: new Date().toISOString(),
@@ -162,20 +164,9 @@ rl.on("line", (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
 
-  if (msg.method === "item/started" && msg.params?.item?.type === "reasoning") {
-    process.stderr.write("[codex] reasoning...\n");
-  }
-  if (msg.method === "item/started" && msg.params?.item?.type === "command") {
-    process.stderr.write(`[codex] executing: ${msg.params.item.command?.command || "command"}\n`);
-  }
+  // Track file changes silently — summary printed once at completion
   if (msg.method === "item/completed" && msg.params?.item?.type === "fileWrite") {
-    process.stderr.write(`[codex] file changed: ${getChangedPathInfo(msg.params)}\n`);
-  }
-  if (msg.method === "turn/diff/updated") {
-    process.stderr.write(`[codex] file changed: ${getChangedPathInfo(msg.params)}\n`);
-  }
-  if (msg.method === "turn/completed") {
-    process.stderr.write("[codex] turn complete\n");
+    filesModified.push(...getChangedPaths(msg.params));
   }
 
   // Handshake response: initialize

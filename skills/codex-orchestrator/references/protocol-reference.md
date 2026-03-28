@@ -39,7 +39,7 @@ codex exec --dangerously-bypass-approvals-and-sandbox -C /path/to/project "your 
 1. Decide the task
 2. Build prompt string
 3. Shell out `codex exec "<prompt>"` 
-4. Read stdout, decide next task
+4. Parse stdout JSONL, decide next task
 5. Repeat
 
 **Limitation:** Approvals disabled by default in exec mode (headless, `approval_policy=never`). No mid-turn injection. Use Tier 2 for stateful or approval-aware orchestration.

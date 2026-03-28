@@ -35,3 +35,16 @@
 **Do not:** Assume the consuming model knows any specific SDK syntax or model IDs.
 **Failure mode:** Model uses stale imports or deprecated model IDs because delta skill didn't cover "known" basics that were actually wrong.
 
+## ADR-006: codex-orchestrator is a pure Codex-routing behavior skill
+**Status:** active
+**Decision:** `skills/codex-orchestrator/SKILL.md` defines a strict orchestrator role: the agent plans, manages threads, and prompts; Codex CLI executes all coding work through the bridge script.
+**Why:** The purpose of this skill is to turn a CLI agent into a reliable Codex operator, not a mixed-mode coding assistant. Routing execution through Codex keeps the control loop consistent and makes thread continuity, retries, and project targeting explicit.
+**Do not:** Let an agent using this skill write code directly or mix direct file edits with Codex-driven execution for the same task.
+**Failure mode:** The skill stops behaving predictably, Codex context management is bypassed, and the orchestrator no longer has a single authoritative execution path.
+
+## ADR-007: codex-mcp exposes task-shaped Codex tools over one persistent app-server per project
+**Status:** active
+**Decision:** `skills/codex-mcp/scripts/codex-mcp-server.mjs` keeps a persistent Codex app-server per project directory and exposes specialized MCP tools (`codex_execute`, `codex_resume`, `codex_search`, `codex_review`, `codex_debug`, `codex_test`) instead of raw shell wrappers.
+**Why:** A persistent server preserves thread continuity for `codex_resume`, while task-shaped tools let the orchestrator pick the right Codex behavior without rebuilding role instructions on every turn.
+**Do not:** Spawn a fresh Codex process for every MCP call or collapse the tool surface back into one opaque bash command.
+**Failure mode:** Resume semantics break, tool behavior becomes inconsistent, and MCP callers lose the predictable separation between search, execute, review, debug, and test flows.

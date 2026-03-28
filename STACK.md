@@ -22,3 +22,7 @@
 **Why:** Legacy SDK has no centralized Client, different API surface, won't support Gemini 3+ features. Causes silent feature gaps and broken code.
 **Instead:** `from google import genai` / `pip install google-genai`. All calls via `client = genai.Client()`.
 
+### Codex app-server thread-start timing
+**Never:** Assume a new Codex thread is ready after an arbitrary sleep.
+**Why:** `thread/start` completion is asynchronous. Fixed delays race the server, so turns can attach to the wrong thread or report the wrong `threadId`.
+**Instead:** Wait for the actual `thread/start` response, serialize turns per project, and reset the app-server after timeouts.
