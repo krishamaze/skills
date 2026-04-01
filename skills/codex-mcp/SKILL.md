@@ -33,13 +33,6 @@ the task:
 turns, use each response to craft the next prompt. Pass `thread_id` to
 continue a previous run with full context.
 
-**Always pass `project_dir`:** the server uses `process.cwd()` as fallback,
-which may not be the project root depending on how the agent spawns it.
-Always pass `project_dir` explicitly:
-```
-codex_run(mode=explore, project_dir="/absolute/path/to/project", prompt="...")
-```
-
 **Review pattern:** after `codex_run(mode=build)` changes code, use
 `codex_review` in a fresh thread with the original requirement — Codex
 evaluates independently without self-review bias.
