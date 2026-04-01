@@ -94,10 +94,15 @@ See `references/setup.md` for per-agent config snippets and Windows commands.
 
 Follow these steps in order:
 
-1. **Read-only preflight** — gather facts without writing anything: resolve the
-   absolute path to `.agents/skills/codex-mcp/scripts/codex-mcp-server.mjs`,
-   check `codex` CLI is installed, check `.codex/config.toml` has a `model`
-   line, identify which agent is invoking this skill.
+1. **Read-only preflight** — gather facts without writing anything:
+   - Resolve the absolute path to `.agents/skills/codex-mcp/scripts/codex-mcp-server.mjs`
+   - Check `codex` CLI is installed
+   - Check `.codex/config.toml` has a `model` line
+   - **Config-drift check**: read the `args` value for `codex-mcp` in the
+     active agent config and compare it to the resolved project-local path above.
+     If they differ (e.g. a stale global path is still registered), flag this as
+     a required fix — the config must be updated before setup is considered done.
+   - Identify which agent is invoking this skill
 2. **Present findings and wait** — report what exists, what's missing, what you
    intend to write. Stop and wait for explicit user approval before any writes.
 3. **Configure the invoking agent only** — add the MCP entry pointing to the
@@ -107,6 +112,11 @@ Follow these steps in order:
 4. **Add `memory/codex-threads.json` to project `.gitignore`** — per project.
 5. **Tell the user to restart** — do not continue the original task in the same
    session unless MCP tools are already loaded.
+6. **Post-restart health probe** — in the new session, make one lightweight
+   `codex_run(mode=inspect, prompt="echo ok")` call before starting real work.
+   If this returns `Transport closed` or fails, setup is **not done** — go to
+   the "On failure" section. Do not treat tool visibility alone as proof of a
+   healthy transport.
 
 ## Thread registry
 
@@ -136,7 +146,24 @@ codex_run(debug):   "Login fails with TypeError on line 42 of src/auth.ts when e
 
 ## On failure
 
-If `codex_run` fails or times out:
+**Tools visible but transport immediately closed** — if the MCP tools appear in
+the agent but the very first `codex_run` call (or the follow-up status ping)
+returns `Transport closed`:
+1. Do not retry blindly. The transport is dead, not slow.
+2. Check for config-path drift: does the registered `args` path in the
+   **invoking agent's** config (not just `~/.codex/config.toml`) match the
+   actual project-local script path? A stale global path is the most common
+   cause after a skills update. Fix the config and restart.
+3. If the path is correct, verify the wrapper and app-server independently:
+   - **Windows**: see `references/troubleshooting-windows.md` for PowerShell
+     commands and diagnosis sequence.
+   - **Unix / macOS**: run the wrapper directly
+     (`node "$(realpath .agents/skills/codex-mcp/scripts/codex-mcp-server.mjs)"`);
+     then run `codex app-server` standalone. If both start cleanly, inspect
+     stderr from the wrapper's `spawn()` call.
+4. Tell the user exactly which step failed and what to check next.
+
+**General failure or timeout:**
 1. Run a follow-up task to check status (ping "status" to see if it's still running)
 2. If it fails again, **do not fall back to direct execution** — that defeats
    context hygiene
@@ -155,7 +182,7 @@ must stay inside this workflow.
 | Wrong project used for `memory/` | Always pass `project_dir` explicitly in tool calls. Do not rely on `process.cwd()`. |
 | Timeout errors | Increase `timeout` parameter. Break large tasks into smaller prompts. |
 | "app-server exited" | Check `.codex/config.toml` has a valid model. If needed, run `codex` once interactively to verify the CLI itself works, but do not assume interactive setup is the only valid fix. |
-| `Transport closed` on Windows | See `references/troubleshooting-windows.md` — verify wrapper and app-server independently. |
+| `Transport closed` (any platform) | Check config-path drift first (most common cause). Then see `references/troubleshooting-windows.md` (Windows) or run wrapper + app-server standalone (Unix). |
 | bwrap/sandbox errors | Expected in containers. The server uses `danger-full-access` sandbox mode by default. |
 | Thread state lost after restart | Expected — server state is in-memory. Registry staleness check (Step 0) handles this automatically. |
 | Wrong thread routed | Check `memory/codex-threads.json`. Topics are human-readable — correct a wrong entry manually. |
