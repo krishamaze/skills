@@ -134,6 +134,23 @@ Every prompt should contain: **what to do** + **where** (file paths) +
 **expected outcome** + **constraints**. Pick the right mode — its baked-in
 role prefix handles the rest.
 
+**Avoiding timeouts:** Default inactivity timeout is 60s. `explore` is most
+at risk — sequential file reads on large trees can gap past 60s between
+events. Other modes rarely hit it (they produce continuous output).
+
+**Core pattern:** Scope narrowly + resume thread. One directory per call,
+pass `thread_id` to continue. Codex accumulates context across calls — the
+second call already knows what the first found. Use the routing decision
+tree in `references/thread-registry.md` to pick the right thread.
+
+```
+codex_run(explore, prompt="Map skills/project-memory/")          → T1
+codex_run(explore, thread_id=T1, prompt="Now map skills/agent-handoff/")
+```
+
+If a single call is legitimately large, pass `timeout=120` or `timeout=180`
+(per-call override, not global).
+
 ```
 codex_run(explore): "List all exported functions in src/auth/ and their error handling patterns."
 codex_run(inspect): "Use the injected `pwd` output and report the exact project root. Do not modify any files."
@@ -180,7 +197,7 @@ must stay inside this workflow.
 | "Codex CLI not found" | `npm install -g @openai/codex` |
 | Tools don't appear in agent | Check config path is absolute. Restart agent session. |
 | Wrong project used for `memory/` | Always pass `project_dir` explicitly in tool calls. Do not rely on `process.cwd()`. |
-| Timeout errors | Increase `timeout` parameter. Break large tasks into smaller prompts. |
+| Timeout errors | Default is 60s inactivity. Pass `timeout=120` or `180` for large tasks. Break work into resumable `thread_id` steps — see prompting section. |
 | "app-server exited" | Check `.codex/config.toml` has a valid model. If needed, run `codex` once interactively to verify the CLI itself works, but do not assume interactive setup is the only valid fix. |
 | `Transport closed` (any platform) | Check config-path drift first (most common cause). Then see `references/troubleshooting-windows.md` (Windows) or run wrapper + app-server standalone (Unix). |
 | bwrap/sandbox errors | Expected in containers. The server uses `danger-full-access` sandbox mode by default. |
