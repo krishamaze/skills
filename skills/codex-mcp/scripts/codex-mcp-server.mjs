@@ -8,10 +8,28 @@ import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 
 // --- Resolve codex binary ---
+// Windows fix (3 cascading issues):
+//   1. `where codex` returns multiple lines — the bare POSIX shell script AND
+//      codex.cmd. .split()[0] picked the POSIX script → Node spawn() ENOENT.
+//   2. shouldUseShell() checks for .cmd to set shell:true, but without .cmd it
+//      always returned false.
+//   3. Even with shell:true, backslash paths (C:\Users\...) break cmd.exe.
+//      Normalize to forward slashes.
 function resolveCodexPath() {
   try {
     const cmd = process.platform === "win32" ? "where codex" : "which codex";
-    return execSync(cmd, { encoding: "utf8" }).trim().split(/\r?\n/)[0];
+    const lines = execSync(cmd, { encoding: "utf8" }).trim().split(/\r?\n/);
+
+    let selected;
+    if (process.platform === "win32") {
+      // Prefer the .cmd wrapper — Node can't spawn bare POSIX scripts on Windows
+      selected = lines.find((l) => /\.cmd$/i.test(l.trim())) || lines[0];
+    } else {
+      selected = lines[0];
+    }
+
+    // Normalize to forward slashes — cmd.exe misparses backslashes with shell:true
+    return selected.trim().replace(/\\/g, "/");
   } catch {
     return null;
   }
