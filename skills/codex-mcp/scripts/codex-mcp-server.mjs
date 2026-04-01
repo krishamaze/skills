@@ -341,17 +341,47 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
       activeTurn.filesModified.push(...getChangedPaths(msg.params));
     }
 
-    // Approval handling
+    // --- Approval handling ---
+    // Command execution approval (original handler)
     if (msg.method === "item/commandExecution/requestApproval") {
       const { command } = msg.params || {};
       const safe = !DANGEROUS.test(command?.command || "");
       send({ id: msg.id, result: { decision: safe ? "accept" : "deny" } });
       if (!safe) activeTurn.errors.push(`Denied dangerous command: ${command?.command}`);
+      return;
+    }
+
+    // File change approval — auto-accept (matches approval_policy="never")
+    if (msg.method === "item/fileChange/requestApproval") {
+      send({ id: msg.id, result: { decision: "accept" } });
+      return;
+    }
+
+    // Permissions approval — auto-accept (matches approval_policy="never")
+    if (msg.method === "item/permissions/requestApproval") {
+      send({ id: msg.id, result: { decision: "accept" } });
+      return;
+    }
+
+    // Tool forwarding — not supported by this wrapper. Return error so
+    // the app-server doesn't hang waiting for a tool result.
+    if (msg.method === "item/tool/requestUserInput" || msg.method === "item/tool/call") {
+      send({ id: msg.id, error: { code: -32601, message: "Tool forwarding not supported by codex-mcp wrapper" } });
+      return;
     }
 
     // Turn complete
     if (msg.method === "turn/completed") {
       completeTurn(activeTurn);
+      return;
+    }
+
+    // --- Catch-all for unhandled server requests ---
+    // Notifications (no id) are safe to ignore. Requests (have id) must get
+    // a response or the app-server blocks forever.
+    if (msg.method && msg.id !== undefined) {
+      process.stderr.write(`[codex-mcp] Unhandled server request: ${msg.method} (id=${msg.id})\n`);
+      send({ id: msg.id, error: { code: -32601, message: `Method not handled: ${msg.method}` } });
     }
   });
 

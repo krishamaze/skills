@@ -203,6 +203,7 @@ must stay inside this workflow.
 | Timeout errors | Default is 60s inactivity. Pass `timeout=120` or `180` for large tasks. Break work into resumable `thread_id` steps — see prompting section. |
 | "app-server exited" | Check `.codex/config.toml` has a valid model. If needed, run `codex` once interactively to verify the CLI itself works, but do not assume interactive setup is the only valid fix. |
 | `Transport closed` (any platform) | Check config-path drift first (most common cause). Then see `references/troubleshooting-windows.md` (Windows) or run wrapper + app-server standalone (Unix). |
+| Turn hangs then times out | Likely an unhandled approval request. Update wrapper to latest version. Check stderr for unhandled method names. |
 | bwrap/sandbox errors | Expected in containers. The server uses `danger-full-access` sandbox mode by default. |
 | Thread state lost after restart | Expected — server state is in-memory. Registry staleness check (Step 0) handles this automatically. |
 | Wrong thread routed | Check `memory/codex-threads.json`. Topics are human-readable — correct a wrong entry manually. |
@@ -229,3 +230,9 @@ directory and keeps it alive across tool calls. Thread state is maintained in
 memory — registry in `memory/codex-threads.json` maps thread IDs to topics so
 routing survives context growth. On shutdown (SIGINT/SIGTERM), all app-server
 processes are cleaned up.
+
+The wrapper handles the core protocol surface: turn lifecycle, text output,
+diffs, file writes, command/file/permissions approvals, and token usage. Some
+newer methods (`thread/fork`, `turn/steer`, tool forwarding via
+`item/tool/call`) are not yet supported — unhandled server requests receive a
+JSON-RPC `-32601` error to prevent silent hangs.
