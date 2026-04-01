@@ -204,6 +204,7 @@ must stay inside this workflow.
 | "app-server exited" | Check `.codex/config.toml` has a valid model. If needed, run `codex` once interactively to verify the CLI itself works, but do not assume interactive setup is the only valid fix. |
 | `Transport closed` (any platform) | Check config-path drift first (most common cause). Then see `references/troubleshooting-windows.md` (Windows) or run wrapper + app-server standalone (Unix). |
 | Turn hangs then times out | Likely an unhandled approval request. Update wrapper to latest version. Check stderr for unhandled method names. |
+| "Codex completed with no output" | Check the `errors` field in the response — rate limits and model errors are now surfaced there. If no errors, the model genuinely returned nothing. |
 | bwrap/sandbox errors | Expected in containers. The server uses `danger-full-access` sandbox mode by default. |
 | Thread state lost after restart | Expected — server state is in-memory. Registry staleness check (Step 0) handles this automatically. |
 | Wrong thread routed | Check `memory/codex-threads.json`. Topics are human-readable — correct a wrong entry manually. |

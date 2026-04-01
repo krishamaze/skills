@@ -325,6 +325,14 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
       activeTurn.output += msg.params?.delta ?? "";
     }
 
+    // Server-side error notification (e.g. rate limit exceeded, system error).
+    // These arrive as {method: "error", params: {error: {message: "..."}}} —
+    // distinct from JSON-RPC error responses which have msg.error at top level.
+    if (msg.method === "error") {
+      const errMsg = msg.params?.error?.message || JSON.stringify(msg.params);
+      activeTurn.errors.push(`Codex error: ${errMsg}`);
+    }
+
     // Token usage
     if (msg.method === "thread/tokenUsage/updated") {
       activeTurn.tokenUsage = msg.params?.tokenUsage;
@@ -372,6 +380,11 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
 
     // Turn complete
     if (msg.method === "turn/completed") {
+      // Extract error from failed turns (e.g. rate limit, model error)
+      const turnError = msg.params?.turn?.error;
+      if (turnError?.message && !activeTurn.errors.some(e => e.includes(turnError.message))) {
+        activeTurn.errors.push(`Turn failed: ${turnError.message}`);
+      }
       completeTurn(activeTurn);
       return;
     }
