@@ -11,7 +11,7 @@ description: >
   per task type. Use this skill whenever the user mentions: "set up codex MCP",
   "connect codex to claude", "codex MCP server", "install codex tools",
   "configure codex integration", or wants Codex available as native tools in
-  any agent. Install globally once — works across all projects and all agents.
+  any agent. Distributed via `npx skills add` — no global install needed.
 ---
 
 ## Your role when these tools are available
@@ -33,9 +33,9 @@ the task:
 turns, use each response to craft the next prompt. Pass `thread_id` to
 continue a previous run with full context.
 
-**Always pass `project_dir`:** the server is installed globally and uses
-`process.cwd()` as fallback, which may not be the project root depending on
-how the agent spawns it. Always pass `project_dir` explicitly:
+**Always pass `project_dir`:** the server uses `process.cwd()` as fallback,
+which may not be the project root depending on how the agent spawns it.
+Always pass `project_dir` explicitly:
 ```
 codex_run(mode=explore, project_dir="/absolute/path/to/project", prompt="...")
 ```
@@ -93,32 +93,25 @@ discovery, approval handling, and timeout transparently.
 
 ## Setup (run this automatically when skill triggers)
 
-The server installs globally once per machine — all agents and all projects
-share the same installation. `memory/` is created per-project on first tool call.
+`npx skills add` already places the server script at a stable project path:
+`.agents/skills/codex-mcp/scripts/codex-mcp-server.mjs` (symlinked into
+`.claude/skills/`). No global copy is needed. Setup just wires the MCP entry.
 
-See `references/setup.md` for platform-specific commands and per-agent config
-snippets. Prefer agent CLIs (`claude mcp add`, `codex mcp add`, `gemini mcp add`)
-over manual config edits when available.
+See `references/setup.md` for per-agent config snippets and Windows commands.
 
 Follow these steps in order:
 
-1. **Read-only preflight** — gather facts without writing anything: whether the
-   global script exists at `~/.local/share/codex-mcp/scripts/codex-mcp-server.mjs`
-   (Unix) or `%USERPROFILE%\.local\share\codex-mcp\scripts\` (Windows), whether
-   `codex` CLI is installed, whether `.codex/config.toml` has a `model` line,
-   which agent is invoking this skill, and any existing configured server path.
-   Do not configure every detected agent as a fallback — infer the invoking
-   agent or ask.
+1. **Read-only preflight** — gather facts without writing anything: resolve the
+   absolute path to `.agents/skills/codex-mcp/scripts/codex-mcp-server.mjs`,
+   check `codex` CLI is installed, check `.codex/config.toml` has a `model`
+   line, identify which agent is invoking this skill.
 2. **Present findings and wait** — report what exists, what's missing, what you
-   intend to write, which agent config you'll touch. Stop and wait for explicit
-   user approval before any writes.
-3. **Configure the invoking agent only** — deploy the wrapper script to the
-   global path, then register it with the invoking agent's MCP config using
-   resolved absolute paths (never `~` or `$HOME` in config values). If an
-   existing configured path mismatches a source wrapper path under `.agent`,
-   `.agents`, or `.claude`, update the installed server to the source version.
-4. **Add `memory/codex-threads.json` to project `.gitignore`** — per project,
-   not per machine.
+   intend to write. Stop and wait for explicit user approval before any writes.
+3. **Configure the invoking agent only** — add the MCP entry pointing to the
+   resolved absolute path of the project-local script. Use resolved absolute
+   paths in config values (never `~` or `$HOME`). Do not copy the script
+   elsewhere.
+4. **Add `memory/codex-threads.json` to project `.gitignore`** — per project.
 5. **Tell the user to restart** — do not continue the original task in the same
    session unless MCP tools are already loaded.
 
