@@ -23,6 +23,13 @@ skills/<name>/
 2. `SKILL.md` body — loaded when skill triggers (<500 lines ideal)
 3. `references/` files — loaded on demand (unlimited)
 
+## Source vs install directories
+
+- **`skills/<name>/`** is the **editable source of truth** — all development and fine-tuning happens here
+- **`.claude/skills/`** and **`.agents/skills/`** are **install artifacts** managed by `npx skills add` (via `skills.sh`) — never edit these directly
+- Workflow: edit source → commit → push to remote → consumers run `npx skills add krishamaze/skills` to install or update
+- Source and install directories intentionally diverge locally; they sync only through the remote publish/install cycle
+
 ## Adding or modifying skills
 
 - **SKILL.md body under 500 lines** — if approaching the limit, move deep content to `references/` and add clear pointers
