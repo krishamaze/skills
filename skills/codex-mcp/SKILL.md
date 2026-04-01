@@ -134,19 +134,22 @@ Every prompt should contain: **what to do** + **where** (file paths) +
 **expected outcome** + **constraints**. Pick the right mode — its baked-in
 role prefix handles the rest.
 
-**Avoiding timeouts:** Default inactivity timeout is 60s. `explore` is most
-at risk — sequential file reads on large trees can gap past 60s between
-events. Other modes rarely hit it (they produce continuous output).
-
-**Core pattern:** Scope narrowly + resume thread. One directory per call,
-pass `thread_id` to continue. Codex accumulates context across calls — the
-second call already knows what the first found. Use the routing decision
-tree in `references/thread-registry.md` to pick the right thread.
+**Scoping prompts:** One focused task per call, pass `thread_id` to continue.
+Codex accumulates context across calls — the second call already knows what
+the first found. This gives better results than broad prompts, and prevents
+inactivity timeouts on very large scopes (`explore` on deep directory trees
+is most at risk). Use the routing decision tree in
+`references/thread-registry.md` to pick the right thread.
 
 ```
 codex_run(explore, prompt="Map skills/project-memory/")          → T1
 codex_run(explore, thread_id=T1, prompt="Now map skills/agent-handoff/")
 ```
+
+Each mode's role prefix instructs Codex to use subagents for parallelism
+(file reading, multi-file edits, test execution, etc.). This produces a
+denser event stream that reduces timeout risk, but focused prompts still
+give higher quality results than broad ones.
 
 If a single call is legitimately large, pass `timeout=120` or `timeout=180`
 (per-call override, not global).
