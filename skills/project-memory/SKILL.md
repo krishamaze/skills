@@ -1,15 +1,21 @@
 ---
 name: project-memory
 description: >
-  Maintains project docs (DECISIONS.md, CONTEXT.md, STACK.md) and handles agent
-  handoffs. Two modes: Handoff scans state across all AI agents to resume work;
-  Memory captures mid-session state. ALWAYS invoke this skill when a user says:
-  "update memory", "save context", "remember this", "/memory", "/update-memory",
-  "/save", "/handoff", "/continue", "capture this", "document this failure",
-  "update stack", "continue where X left off", "handoff", "read agent logs", or
-  wants to resume work from another agent. Invoke after completed features,
-  blockers, version changes, agent switches, crash recovery, or rate limits.
-  Trigger aggressively to capture any decision, failure, or state change.
+  Maintains three living project docs — DECISIONS.md (what + why), CONTEXT.md
+  (current state + next action), STACK.md (locked versions + do-not patterns +
+  failure root causes). Two modes: **Handoff** scans all AI agent state and
+  resumes work; **Memory** saves current state like a save button.
+  ALWAYS invoke this skill when: a user says "update memory", "log this decision",
+  "save context", "remember this", "update project docs", "memory", "/memory",
+  "/update-memory", "/save", "/handoff", "/continue", "capture this", "we just
+  decided", "add to decisions", "document this failure", "update stack",
+  "continue where X left off", "pick up codex's work", "what was the last agent
+  doing", "handoff", "agent state", "read all agent logs", "consolidate agent
+  work", "cross-agent continue", or wants to resume work started by a different
+  AI agent. Also invoke after any completed feature, resolved blocker, version
+  change, agent switch, crash recovery, or rate limit. Trigger aggressively —
+  if there is any chance the conversation contains a decision, failure, state
+  change, or agent handoff worth capturing, invoke this skill.
 ---
 
 # project-memory
@@ -69,6 +75,7 @@ Run this on fresh sessions, agent switches, or when the user says "continue",
 ### Step 1 — Scan all agents
 
 ```bash
+# Use `python` instead of `python3` on Windows
 python3 <skill-dir>/scripts/scan_agent_state.py "$(pwd)"
 ```
 
@@ -314,7 +321,11 @@ Two sections. Append-only except version bumps.
 **Count lines before writing:**
 
 ```bash
+# Linux/macOS:
 wc -l DECISIONS.md STACK.md CONTEXT.md
+
+# Windows (PowerShell):
+(Get-Content DECISIONS.md, STACK.md, CONTEXT.md -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
 ```
 
 **If a file would exceed its cap after your addition:**
@@ -325,9 +336,9 @@ wc -l DECISIONS.md STACK.md CONTEXT.md
 3. Only after archiving, write.
 
 **Hard caps:**
-- `DECISIONS.md` — 60 lines
+- `DECISIONS.md` — 150 lines
 - `CONTEXT.md` — 20 lines (always)
-- `STACK.md` — 80 lines
+- `STACK.md` — 200 lines
 
 **Quality check:** Would removing this sentence lose information? If no → remove it.
 

@@ -37,14 +37,31 @@ def path_to_claude_key(project_path: str) -> str:
 
 
 def read_tail(filepath: str, lines: int = 50) -> list[str]:
-    """Read last N lines of a file efficiently using tail."""
+    """Read last N lines of a file efficiently in pure Python (cross-platform)."""
     try:
-        result = subprocess.run(
-            ["tail", "-n", str(lines), filepath],
-            capture_output=True, text=True, timeout=5
-        )
-        return result.stdout.strip().split("\n") if result.stdout.strip() else []
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+        with open(filepath, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            filesize = f.tell()
+            blocksize = 8192
+            if filesize == 0:
+                return []
+            
+            blocks = []
+            lines_found = 0
+            position = filesize
+
+            while position > 0 and lines_found <= lines:
+                read_size = min(blocksize, position)
+                position -= read_size
+                f.seek(position)
+                block = f.read(read_size)
+                blocks.append(block)
+                lines_found += block.count(b'\n')
+
+            data = b''.join(reversed(blocks))
+            output_lines = data.decode('utf-8', errors='replace').splitlines()
+            return output_lines[-lines:] if output_lines else []
+    except Exception:
         return []
 
 
