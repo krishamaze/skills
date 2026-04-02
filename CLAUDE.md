@@ -61,10 +61,19 @@ Eval workspaces go in `<skill-name>-workspace/` as a sibling to the skill direct
 | Stealth browser | `camoufox` (>=0.4.0) | raw Playwright |
 | Fast APIs | FastAPI | Flask/Django |
 
+## Project memory (DECISIONS.md / CONTEXT.md / STACK.md)
+
+This repo uses three living documents at project root. See `skills/project-memory/SKILL.md` for the full protocol.
+
+- **DECISIONS.md** — append-only ADRs. Never edit existing entries.
+- **CONTEXT.md** — current state, overwritten each update. Read this first on session start.
+- **STACK.md** — locked versions + do-not patterns. Append-only.
+
 ## Key decisions (from DECISIONS.md)
 
 - **ADR-003**: `project-memory` is installed via **symlink** (not copy) at project scope — always symlink when updating it so changes propagate
 - **ADR-005**: API reference skills (e.g., `gemini-api-2026`) are **comprehensive and self-contained**, not delta-only — assume the consuming model may not know any specific SDK syntax or model IDs
+- **ADR-012**: When `codex_run`/`codex_review` MCP tools are available, the agent is a **controller only** — it must not read files, write code, or run commands directly. All execution routes through Codex. See `skills/codex-mcp/SKILL.md` for the full HARD-GATE and rationalization table.
 - `skills-lock.json` tracks skills installed via `npx skills add` with their source and hash
 
 ## Installing skills (consumer-side)
