@@ -563,9 +563,16 @@ function formatResult(result) {
     summary.push(`\nErrors: ${result.errors.join("; ")}`);
   }
 
+  // Status signal matching the SKILL.md enum (DONE/EMPTY/ERROR/TIMEOUT)
+  let status = "DONE";
+  if (result.errors.some((e) => /timeout/i.test(e))) status = "TIMEOUT";
+  else if (result.errors.length > 0) status = "ERROR";
+  else if (!result.output?.trim()) status = "EMPTY";
+
   return {
-    content: [{ type: "text", text: summary.join("\n") || "Codex completed with no output." }],
+    content: [{ type: "text", text: summary.join("\n") || `Status: EMPTY — codex produced no output.` }],
     structuredContent: {
+      status,
       output: result.output,
       diffs: result.diffs,
       errors: result.errors,
@@ -628,12 +635,12 @@ Example: CODEX_THREAD: auth/map | Mapped all exported auth functions and identif
 const TOOLS = [
   {
     name: "codex_run",
-    description: "Send a task to Codex in the chosen mode. explore: broad codebase discovery read-only. inspect: targeted read-only or injected-context checks. build: write/edit/run code. debug: reproduce→diagnose→fix→verify a bug. test: write or run tests with edge case coverage. research: web search, no file writes. Pass thread_id to continue a previous run with full context. Omit thread_id to start fresh.",
+    description: "Execute a task through Codex. Choose mode: explore|inspect|build|debug|test|research. Pass thread_id to continue, omit to start fresh.",
     inputSchema: RUN_SCHEMA,
   },
   {
     name: "codex_review",
-    description: "Independent code review in an isolated thread — never shares context with codex_run threads so Codex reads code without self-review bias. Include the original requirement in the prompt. Pass thread_id to follow up within an existing review thread.",
+    description: "Independent code review in an isolated Codex thread. Pass thread_id to follow up within an existing review.",
     inputSchema: REVIEW_SCHEMA,
   },
 ];
