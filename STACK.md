@@ -86,3 +86,8 @@
 **Never:** Add `memory/` to `.gitignore` when the intended ignore target is only the Codex thread registry file.
 **Why:** Ignoring the whole directory hides unrelated project files that may later live under `memory/`. The actual wrapper artifact that needs ignoring is `memory/codex-threads.json`.
 **Instead:** Append only `memory/codex-threads.json`.
+
+### install-artifact direct edits
+**Never:** Manually write, copy, or edit files under `.agents/skills/`, `.claude/skills/`, or any install directory managed by `npx skills add`.
+**Why:** These directories are install artifacts, not source. They sync only through the remote publish/install cycle (`edit source → commit → push → npx skills add krishamaze/skills`). Manual edits diverge them from the publish pipeline, get silently overwritten on next install, and bypass any packaging/validation `skills.sh` performs.
+**Instead:** Edit only under `skills/<name>/` (the source of truth). Commit, push, and let consumers run `npx skills add` to update their install copies.

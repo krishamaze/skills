@@ -1,21 +1,15 @@
 ---
 name: project-memory
 description: >
-  Maintains three living project docs — DECISIONS.md (what + why), CONTEXT.md
-  (current state + next action), STACK.md (locked versions + do-not patterns +
-  failure root causes). Two modes: **Handoff** scans all AI agent state and
-  resumes work; **Memory** saves current state like a save button.
-  ALWAYS invoke this skill when: a user says "update memory", "log this decision",
-  "save context", "remember this", "update project docs", "memory", "/memory",
-  "/update-memory", "/save", "/handoff", "/continue", "capture this", "we just
-  decided", "add to decisions", "document this failure", "update stack",
-  "continue where X left off", "pick up codex's work", "what was the last agent
-  doing", "handoff", "agent state", "read all agent logs", "consolidate agent
-  work", "cross-agent continue", or wants to resume work started by a different
-  AI agent. Also invoke after any completed feature, resolved blocker, version
-  change, agent switch, crash recovery, or rate limit. Trigger aggressively —
-  if there is any chance the conversation contains a decision, failure, state
-  change, or agent handoff worth capturing, invoke this skill.
+  Maintains project docs (DECISIONS.md, CONTEXT.md, STACK.md) and handles agent
+  handoffs. Two modes: Handoff scans state across all AI agents to resume work;
+  Memory captures mid-session state. ALWAYS invoke this skill when a user says:
+  "update memory", "save context", "remember this", "/memory", "/update-memory",
+  "/save", "/handoff", "/continue", "capture this", "document this failure",
+  "update stack", "continue where X left off", "handoff", "read agent logs", or
+  wants to resume work from another agent. Invoke after completed features,
+  blockers, version changes, agent switches, crash recovery, or rate limits.
+  Trigger aggressively to capture any decision, failure, or state change.
 ---
 
 # project-memory

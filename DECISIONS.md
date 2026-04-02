@@ -79,3 +79,24 @@
 **Why:** Without a hard enforcement mechanism, agents rationalize bypassing delegation ("Codex returned empty so I'll just do it"), breaking Codex's context chain and silently contradicting its threads.
 **Do not:** Soften or remove the HARD-GATE. Status-enum table and rationalization table are load-bearing — they close the remaining escape hatches.
 **Failure mode:** Agent reverts to mixed-mode execution, Codex thread context diverges from the workspace, and subsequent Codex turns overwrite direct changes.
+
+## ADR-013: codex-mcp auto-restarts app-server on rate-limit errors
+**Status:** active
+**Decision:** `completeTurn()` in `codex-mcp-server.mjs` pattern-matches errors against `RATE_LIMIT_RE` (`rate limit`, `usage limit`, `429`, `quota exceeded`, `too many requests`). On match, it kills the stale app-server process and removes it from its pool so the next tool call spawns a fresh one.
+**Why:** The persistent app-server inherits credentials from the environment at spawn time. When Account A hits a rate limit and the user switches to Account B, the old process keeps using Account A's stale credentials. Killing and re-spawning is the only way to pick up the new credentials.
+**Do not:** Try to hot-swap credentials on a running app-server — Codex doesn't support that. Don't retry automatically within the same turn — let the orchestrator decide when to retry.
+**Failure mode:** Without this, every call keeps failing with Account A's rate limit even after switching accounts, requiring a full MCP server restart.
+
+## ADR-014: Per-mode reasoning effort in turn/start
+**Status:** active
+**Decision:** Each `codex_run` mode and `codex_review` now sends an `effort` field in the `turn/start` JSON-RPC params, matching the app-server's `TurnStartParams.effort` protocol field. Mapping: explore→low, inspect→medium, research→medium, build→high, test→high, review→high, debug→xhigh.
+**Why:** GPT-5.4's reasoning effort directly controls thinking depth and latency. Orientation tasks (explore) don't benefit from deep reasoning — `low` saves latency. Root cause analysis (debug) is the exact use case `xhigh` is designed for. Build/test/review need reliable instruction-following at `high` without the over-engineering risk of `xhigh`.
+**Do not:** Set everything to `xhigh` — it causes over-analysis on simple tasks and increases latency. Don't omit the field (falls back to config.toml's global `model_reasoning_effort`, which may not be optimal per task type).
+**Failure mode:** Without per-mode effort, explore tasks waste latency on deep reasoning while debug tasks get insufficient analysis depth.
+
+## ADR-015: Native review/start protocol, drop reviewServers pool
+**Status:** active
+**Decision:** `codex_review` now uses the app-server's native `review/start` JSON-RPC method with `delivery: "detached"` instead of `turn/start` with a review role prefix. The separate `reviewServers` process pool is removed — a single `runServers` pool serves all operations. Structured review targets are exposed: `uncommitted_changes`, `base_branch`, `commit`, `custom`. Follow-up reviews still use `turn/start` on the detached review thread.
+**Why:** `review/start` tells the app-server to gather git diffs natively (staged + unstaged + untracked), format them, and inject into the model context. The old approach relied on the model running `git diff` itself — unreliable. Detached delivery creates an isolated review thread without needing a second persistent process. Structured targets enable reliable "review this branch" or "review this commit" workflows.
+**Do not:** Use `review/start` for follow-up messages on an existing review thread — that starts a NEW review. Use `turn/start` for follow-ups instead. Don't use `delivery: "inline"` — it pollutes the run thread with review context.
+**Failure mode:** Without native review/start, reviews depend on the model correctly invoking git commands, which fails on partial stages, untracked files, and large diffs.

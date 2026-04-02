@@ -52,7 +52,23 @@ function getModel() {
 
 const CODEX_BIN = resolveCodexPath();
 const DANGEROUS = /rm\s+-rf\s+[/~]|DROP\s+TABLE|format\s+C:|\bshutdown\b|\breboot\b/i;
+const RATE_LIMIT_RE = /rate.?limit|usage.?limit|too many requests|429|quota exceeded/i;
 const SHOULD_LOG_APP_SERVER = process.platform === "win32";
+
+// Per-mode reasoning effort for turn/start — maps to TurnStartParams.effort
+// Values: "none"|"minimal"|"low"|"medium"|"high"|"xhigh" (ReasoningEffort enum)
+// Rationale: explore/inspect are orientation work (low/medium saves latency),
+// build/test need reliable instruction-following (high), debug needs deep root
+// cause analysis (xhigh is designed for this), review is thorough but stable (high).
+const MODE_EFFORT = {
+  explore:  "low",
+  inspect:  "medium",
+  build:    "high",
+  debug:    "xhigh",
+  test:     "high",
+  research: "medium",
+};
+const REVIEW_EFFORT = "high";
 
 function shouldUseShell(commandPath) {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(commandPath || "");
@@ -75,9 +91,8 @@ function logAppServer(message) {
   process.stderr.write(`[codex-mcp] ${message}\n`);
 }
 
-// --- App-server process pools (separate namespaces for run vs review) ---
-const runServers    = new Map(); // projectDir → server (for codex_run)
-const reviewServers = new Map(); // projectDir → server (for codex_review)
+// --- App-server process pool (single pool; review/start with detached delivery handles isolation) ---
+const runServers    = new Map(); // projectDir → server
 const reviewThreadIds = new Set(); // threadIds that belong to review namespace
 
 // --- Thread registry (memory/codex-threads.json per project) ---
@@ -315,6 +330,15 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
       return;
     }
 
+    // review/start response — capture reviewThreadId for thread registry
+    if (msg.id !== undefined && msg.result?.reviewThreadId) {
+      const reviewTurn = server.currentTurn;
+      if (reviewTurn && reviewTurn.id === msg.id) {
+        reviewTurn.reviewThreadId = msg.result.reviewThreadId;
+      }
+      return;
+    }
+
     if (msg.error) {
       const activeTurn = server.currentTurn;
       if (activeTurn) {
@@ -417,7 +441,7 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
   });
 
   proc.stderr.on("data", (chunk) => {
-    server.stderr += chunk.toString();
+    server.stderr = (server.stderr + chunk.toString()).slice(-8192);
   });
 
   proc.on("error", (error) => {
@@ -449,6 +473,18 @@ function spawnServer(projectDir, serverMap, sandboxMode = "danger-full-access", 
   return server;
 }
 
+/**
+ * Kill a server and remove from its pool so the next call spawns fresh.
+ * Used for rate-limit recovery — the new process inherits updated env credentials.
+ */
+function killServer(serverMap, projectDir) {
+  const server = serverMap.get(projectDir);
+  if (!server) return;
+  serverMap.delete(projectDir);
+  try { server.proc.kill(); } catch { /* already dead */ }
+  logAppServer(`killed stale app-server for ${projectDir}`);
+}
+
 function completeTurn(turn) {
   if (turn.done) return;
   turn.done = true;
@@ -458,19 +494,33 @@ function completeTurn(turn) {
   if (turn.server.currentTurn === turn) {
     turn.server.currentTurn = null;
   }
+
+  // --- Rate-limit auto-restart ---
+  // If any error matches rate/usage limit patterns, kill the stale app-server
+  // so the next tool call spawns a fresh one (picking up new credentials/quota).
+  const hitRateLimit = turn.errors.some((e) => RATE_LIMIT_RE.test(e));
+  if (hitRateLimit) {
+    for (const [dir, srv] of runServers) {
+      if (srv === turn.server) { killServer(runServers, dir); break; }
+    }
+    turn.errors.push(
+      "Rate limit detected. App-server restarted with fresh credentials. Please retry."
+    );
+  }
+
   turn.resolve({
     output: turn.output.trim(),
     diffs: turn.diffs,
     errors: turn.errors,
-    threadId: turn.threadId,
+    threadId: turn.reviewThreadId || turn.threadId,
     filesModified: uniqueFiles,
     tokenUsage: turn.tokenUsage,
   });
 }
 
 async function executeTurn(projectDir, prompt, options = {}) {
-  const { threadId = null, timeout = 60, contextCmd = null, serverMap = runServers } = options;
-  const server = spawnServer(projectDir, serverMap);
+  const { threadId = null, timeout = 60, contextCmd = null, effort = null, reviewTarget = null } = options;
+  const server = spawnServer(projectDir, runServers);
   await server.readyPromise;
 
   const runTurn = async () => {
@@ -503,6 +553,7 @@ async function executeTurn(projectDir, prompt, options = {}) {
         id: turnId,
         server,
         threadId: activeThreadId,
+        reviewThreadId: null,
         output: "",
         diffs: [],
         errors: [],
@@ -522,14 +573,31 @@ async function executeTurn(projectDir, prompt, options = {}) {
       server.pending.set(turnId, turn);
       server.currentTurn = turn;
 
-      server.send({
-        method: "turn/start",
-        id: turnId,
-        params: {
+      if (reviewTarget) {
+        // Native review/start — app-server gathers diffs, manages isolation
+        server.send({
+          method: "review/start",
+          id: turnId,
+          params: {
+            threadId: activeThreadId,
+            target: reviewTarget,
+            delivery: "detached",
+          },
+        });
+      } else {
+        const turnParams = {
           threadId: activeThreadId,
           input: [{ type: "text", text: fullPrompt }],
-        },
-      });
+        };
+        // Per-mode reasoning effort — protocol field: TurnStartParams.effort
+        if (effort) turnParams.effort = effort;
+
+        server.send({
+          method: "turn/start",
+          id: turnId,
+          params: turnParams,
+        });
+      }
     });
   };
 
@@ -594,6 +662,26 @@ const ROLE_PREFIX = {
   research: "RESEARCH MODE: Use web search to gather current, accurate information. Do NOT write, create, or modify any files. Return a structured summary with: key findings, relevant sources with URLs, and any caveats about recency or reliability. Use subagents to search multiple topics in parallel.",
 };
 
+/**
+ * Build ReviewTarget for the native review/start protocol method.
+ * Maps tool args to ReviewTarget enum: UncommittedChanges | BaseBranch | Commit | Custom.
+ */
+function buildReviewTarget(args) {
+  switch (args.target) {
+    case "uncommitted_changes":
+      return { type: "uncommittedChanges" };
+    case "base_branch":
+      if (!args.branch) throw new Error("'branch' is required for base_branch target");
+      return { type: "baseBranch", branch: args.branch };
+    case "commit":
+      if (!args.sha) throw new Error("'sha' is required for commit target");
+      return { type: "commit", sha: args.sha, title: args.title || null };
+    case "custom":
+    default:
+      return { type: "custom", instructions: args.prompt };
+  }
+}
+
 const RUN_SCHEMA = {
   type: "object",
   properties: {
@@ -614,7 +702,15 @@ const RUN_SCHEMA = {
 const REVIEW_SCHEMA = {
   type: "object",
   properties: {
-    prompt: { type: "string", description: "What to review. Always include: (1) the original requirement, (2) what was built. Codex reads code fresh — give it the context it needs to evaluate correctly." },
+    prompt: { type: "string", description: "What to review. For 'custom' target: the review instructions. For structured targets: optional additional context." },
+    target: {
+      type: "string",
+      enum: ["uncommitted_changes", "base_branch", "commit", "custom"],
+      description: "What to review. uncommitted_changes: staged+unstaged+untracked git changes. base_branch: diff against a branch. commit: a specific commit. custom: free-form instructions (default).",
+    },
+    branch: { type: "string", description: "Branch name for base_branch target." },
+    sha: { type: "string", description: "Commit SHA for commit target." },
+    title: { type: "string", description: "Optional commit title for commit target." },
     thread_id: { type: "string", description: "Continue an existing review thread for follow-up questions. Omit to start a fresh review. Never pass a thread_id returned by codex_run." },
     project_dir: { type: "string", description: "Project directory. Defaults to cwd." },
     timeout: { type: "number", description: "Inactivity timeout in seconds. Default 60." },
@@ -640,7 +736,7 @@ const TOOLS = [
   },
   {
     name: "codex_review",
-    description: "Independent code review in an isolated Codex thread. Pass thread_id to follow up within an existing review.",
+    description: "Independent code review in an isolated Codex thread. Supports structured targets: uncommitted_changes (git diff), base_branch, commit, or custom instructions. Pass thread_id to follow up within an existing review.",
     inputSchema: REVIEW_SCHEMA,
   },
 ];
@@ -731,7 +827,7 @@ mcpRl.on("line", async (line) => {
             threadId: args.thread_id || null,
             timeout,
             contextCmd: args.context_cmd || null,
-            serverMap: runServers,
+            effort: MODE_EFFORT[mode],
           });
 
           if (result.threadId) {
@@ -762,13 +858,25 @@ mcpRl.on("line", async (line) => {
             break;
           }
 
-          const fullPrompt = REVIEW_ROLE_PREFIX + "\n\n" + args.prompt + THREAD_SUFFIX;
           initRegistry(projectDir);
-          const result = await executeTurn(projectDir, fullPrompt, {
-            threadId: args.thread_id || null,
-            timeout,
-            serverMap: reviewServers,
-          });
+          let result;
+
+          if (args.thread_id) {
+            // Follow-up on existing review thread — use turn/start
+            const fullPrompt = REVIEW_ROLE_PREFIX + "\n\n" + args.prompt + THREAD_SUFFIX;
+            result = await executeTurn(projectDir, fullPrompt, {
+              threadId: args.thread_id,
+              timeout,
+              effort: REVIEW_EFFORT,
+            });
+          } else {
+            // New review — use native review/start protocol
+            const reviewTarget = buildReviewTarget(args);
+            result = await executeTurn(projectDir, null, {
+              timeout,
+              reviewTarget,
+            });
+          }
 
           // Register threadId in review namespace
           if (result.threadId) {
@@ -806,13 +914,11 @@ mcpRl.on("line", async (line) => {
 // Clean shutdown
 process.on("SIGINT", () => {
   for (const server of runServers.values()) server.proc.kill();
-  for (const server of reviewServers.values()) server.proc.kill();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   for (const server of runServers.values()) server.proc.kill();
-  for (const server of reviewServers.values()) server.proc.kill();
   process.exit(0);
 });
 

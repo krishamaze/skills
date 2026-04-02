@@ -78,7 +78,7 @@ Pick the right mode for the task:
 | `codex_run` | debug | new or resume | Reproduce → diagnose → fix → verify a bug |
 | `codex_run` | test | new or resume | Write or run tests, report pass/fail |
 | `codex_run` | research | new or resume | Web search only — no file writes |
-| `codex_review` | — | isolated | Independent code review — fresh thread, no self-bias |
+| `codex_review` | — | isolated | Independent code review with structured targets (e.g. uncommitted changes, branches) |
 
 Pass `thread_id` to resume an existing thread. Omit to start fresh.
 `codex_review` threads are namespace-isolated — never pass a review `thread_id`
@@ -122,8 +122,7 @@ codex_run(debug):   "Login fails with TypeError on line 42 of src/auth.ts when e
 ```
 
 **Review pattern:** after `codex_run(mode=build)` changes code, use
-`codex_review` in a fresh thread with the original requirement — Codex
-evaluates independently without self-review bias.
+`codex_review` with a structured target (`target="uncommitted_changes"`) to automatically evaluate your local workspace diff against the original requirement in a fresh thread, completely isolated from self-review bias. Use `target="base_branch", branch="main"` for PR-level reviews.
 
 ## Thread registry
 
