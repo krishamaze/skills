@@ -22,11 +22,7 @@
 **Failure mode:** Stale skill copy diverges from repo version.
 
 ## ADR-004: Skills contain delta knowledge only — not general concepts
-**Status:** superseded by ADR-005
-**Decision:** Skills teach only what a 2024-trained model doesn't know. General concepts (streaming, embeddings, FC basics) are omitted.
-**Why:** Skills are context-window budget. Repeating known knowledge wastes tokens and dilutes the new information that actually matters. A skill is a patch, not a manual.
-**Do not:** Include tutorials for concepts the model already knows (e.g., "what is streaming", "how does function calling work").
-**Failure mode:** Skill bloats to 1000+ lines, exceeding the 500-line SKILL.md limit and burying critical delta knowledge in noise.
+**Status:** superseded by ADR-005. Full entry in `references/decisions-archive.md`.
 
 ## ADR-005: API skills are comprehensive and self-contained
 **Status:** active
@@ -76,3 +72,10 @@
 **Why:** The v2 surface is narrower and more coherent than the old 6-tool API, and the installed copy now includes the restart-safe thread registry fixes validated on the extracted candidate before promotion.
 **Do not:** Call removed v1 tool names like `codex_execute`, `codex_resume`, `codex_search`, `codex_debug`, or `codex_test` against the installed skill.
 **Failure mode:** MCP callers target tools that no longer exist, or they bypass the validated v2 thread and mode routing contract.
+
+## ADR-012: codex-mcp enforces controller role via HARD-GATE and Iron Law
+**Status:** active
+**Decision:** codex-mcp SKILL.md opens with a `<HARD-GATE>` block and an Iron Law that prohibit the orchestrating agent from doing any direct work when MCP tools are present.
+**Why:** Without a hard enforcement mechanism, agents rationalize bypassing delegation ("Codex returned empty so I'll just do it"), breaking Codex's context chain and silently contradicting its threads.
+**Do not:** Soften or remove the HARD-GATE. Status-enum table and rationalization table are load-bearing — they close the remaining escape hatches.
+**Failure mode:** Agent reverts to mixed-mode execution, Codex thread context diverges from the workspace, and subsequent Codex turns overwrite direct changes.
