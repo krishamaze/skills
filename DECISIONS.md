@@ -100,3 +100,17 @@
 **Why:** `review/start` tells the app-server to gather git diffs natively (staged + unstaged + untracked), format them, and inject into the model context. The old approach relied on the model running `git diff` itself — unreliable. Detached delivery creates an isolated review thread without needing a second persistent process. Structured targets enable reliable "review this branch" or "review this commit" workflows.
 **Do not:** Use `review/start` for follow-up messages on an existing review thread — that starts a NEW review. Use `turn/start` for follow-ups instead. Don't use `delivery: "inline"` — it pollutes the run thread with review context.
 **Failure mode:** Without native review/start, reviews depend on the model correctly invoking git commands, which fails on partial stages, untracked files, and large diffs.
+
+## ADR-016: codex-mcp enforces explicit Controller Mindset
+**Status:** active
+**Decision:** Added "The Controller Mindset" to SKILL.md with 3 rules: define outcome before dispatch, one job per call, and verify before next step. Explicitly state the plan stays with the controller.
+**Why:** HARD-GATE only told agents what not to do (execute directly), but left ambiguity on how to coordinate tasks efficiently. The mindset rules and separating planning context set a positive operational contract.
+**Do not:** Pass entire master plans, checklists, or unbounded scopes to Codex threads.
+**Failure mode:** Threads diverge, over-analyze scope, or get stuck and the controller loses the overall workflow.
+
+## ADR-017: codex-mcp wrapper excludes background auto-compression
+**Status:** active
+**Decision:** The `codex-mcp-server` node wrapper will not track `session-state.json` side-effects or hijack JSON-RPC loops to trigger `thread/compact` autonomously.
+**Why:** The wrapper was recently stabilized with critical rate limiting and approval logic. Adding async state tracking or autonomous RPC calls introduces significant complexity. The Rust app-server already handles its own compaction internally if requested. The Node wrapper should remain a thin, stable passthrough layer.
+**Do not:** Add background file monitoring, autonomous thread hydration, or side-effect loop tasks into the MCP node wrapper.
+**Failure mode:** Race conditions with thread state tracking, stalled JSON-RPC streams, and regressions in connection stability.
