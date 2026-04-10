@@ -100,8 +100,8 @@ knows what the first found. This gives better results than broad prompts and
 prevents inactivity timeouts on large scopes.
 
 ```
-codex_run(explore, prompt="Map skills/project-memory/")          → T1
-codex_run(explore, thread_id=T1, prompt="Now map skills/agent-handoff/")
+codex_run(explore, prompt="Map skills-lab/project-memory/")          → T1
+codex_run(explore, thread_id=T1, prompt="Now map skills-lab/codex-mcp/")
 ```
 
 Each mode's role prefix instructs Codex to use subagents for parallelism

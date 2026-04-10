@@ -5,6 +5,34 @@ All tables, columns, and types are authoritative — no assumptions.
 
 ---
 
+## Table of Contents
+
+1. [kb_firms — Company / Business Profile](#kb_firms--company--business-profile)
+2. [kb_prefix — Invoice Prefix Registry](#kb_prefix--invoice-prefix-registry)
+3. [kb_names — Parties (Customers & Vendors)](#kb_names--parties-customers--vendors)
+4. [kb_items — Products / Services](#kb_items--products--services)
+5. [kb_item_categories — Product Categories](#kb_item_categories--product-categories)
+6. [kb_item_units — Units of Measure](#kb_item_units--units-of-measure)
+7. [kb_item_units_mapping — UoM Conversion Rates](#kb_item_units_mapping--uom-conversion-rates)
+8. [kb_tax_code — Tax Definitions](#kb_tax_code--tax-definitions)
+9. [kb_transactions — All Transaction Headers](#kb_transactions--all-transaction-headers)
+10. [kb_lineitems — Invoice Line Items](#kb_lineitems--invoice-line-items)
+11. [kb_paymentTypes — Payment Methods](#kb_paymenttypes--payment-methods)
+12. [kb_payment_terms — Payment Terms](#kb_payment_terms--payment-terms)
+13. [txn_payment_mapping — Payment Method Per Transaction](#txn_payment_mapping--payment-method-per-transaction)
+14. [kb_txn_links — Optional Payment-to-Invoice Links](#kb_txn_links--optional-payment-to-invoice-links)
+15. [kb_linked_transactions — Document Conversion Trail](#kb_linked_transactions--document-conversion-trail)
+16. [journal_entry — Manual Journal Entry Headers](#journal_entry--manual-journal-entry-headers)
+17. [journal_entry_line_items — Manual Journal Lines](#journal_entry_line_items--manual-journal-lines)
+18. [other_accounts — Vyapar Internal Chart of Accounts](#other_accounts--vyapar-internal-chart-of-accounts)
+19. [kb_serial_details — Serial Number Registry](#kb_serial_details--serial-number-registry)
+20. [kb_serial_mapping — Serial ↔ Transaction Link](#kb_serial_mapping--serial--transaction-link)
+21. [kb_item_stock_tracking — Stock Lots / Batches](#kb_item_stock_tracking--stock-lots--batches)
+22. [party_to_party_transfer — Inter-Party Transfers](#party_to_party_transfer--inter-party-transfers)
+23. [kb_settings — App Settings](#kb_settings--app-settings)
+
+---
+
 ## kb_firms — Company / Business Profile
 
 One row per Vyapar business (single-company app).
@@ -22,11 +50,47 @@ One row per Vyapar business (single-company app).
 | firm_bank_name | varchar(32) | Primary bank name |
 | firm_bank_account_number | varchar(32) | |
 | firm_bank_ifsc_code | varchar(32) | |
-| firm_invoice_prefix | varchar(10) | Invoice number sequence prefix |
-| firm_invoice_number | INTEGER | Last used invoice number |
+| firm_invoice_prefix | varchar(10) | Invoice number sequence prefix (legacy — see kb_prefix) |
+| firm_invoice_number | INTEGER | Last used invoice sequence number |
 | firm_tax_invoice_prefix | varchar(10) | Tax invoice prefix |
+| firm_tax_invoice_number | INTEGER | Last used tax invoice number |
+| firm_estimate_prefix | varchar(10) | Estimate/quotation prefix |
+| firm_estimate_number | INTEGER | Last used estimate number |
+| firm_cash_in_prefix | varchar(10) | Payment-In voucher prefix |
+| firm_delivery_challan_prefix | varchar(10) | Delivery challan prefix |
+| firm_tin_number | varchar(20) | Legacy TIN |
+| firm_description | varchar(256) | Business description |
+| firm_logo | blob | Logo image |
+| firm_signature | blob | Signature image |
+| firm_visiting_card | blob | Visiting card image |
+| firm_dispatch_address | varchar(256) | Dispatch address |
+| firm_dispatch_pincode | varchar(10) | Dispatch pincode |
+| firm_phone_secondary | varchar(20) | Secondary phone |
+| firm_upi_bank_account_number | varchar(32) | UPI account number |
+| firm_upi_bank_ifsc_code | varchar(32) | UPI IFSC code |
+| firm_invoice_printing_bank_id | INTEGER | Bank shown on invoice |
+| firm_collect_payment_bank_id | INTEGER | Bank for payment collection |
+| firm_pg_linked_account_id | varchar(64) | Payment gateway account |
 | firm_business_type | INTEGER | See enums.md — 1=Retail, 2=Wholesale, etc. |
 | firm_business_category | varchar(50) | Free text industry category |
+
+---
+
+## kb_prefix — Invoice Prefix Registry
+
+Controls which prefix string is used for each transaction type. Supersedes the legacy `firm_invoice_prefix` column in `kb_firms`. When creating or filtering invoices, join via `txn_prefix_id` to get the active prefix.
+
+| Column | Type | Notes |
+|---|---|---|
+| prefix_id | INTEGER PK | |
+| prefix_firm_id | INTEGER | FK → kb_firms |
+| prefix_txn_type | INTEGER | Transaction type this prefix applies to (1=Sale Invoice, etc.) |
+| prefix_value | varchar(50) | The prefix string (e.g. `2526FT`, `25-26/`, `TEMP`) |
+| prefix_is_default | INTEGER | 1 = active/default prefix for this txn_type |
+
+**Invoice number = `txn_invoice_prefix` + `txn_ref_number_char`**
+Both stored on `kb_transactions`. `txn_prefix_id` FK → `kb_prefix.prefix_id`.
+Example: prefix `2526FT` + number `1026` = Invoice `2526FT1026`.
 
 ---
 
@@ -157,7 +221,7 @@ Always read `references/enums.md` first.
 | txn_invoice_prefix | varchar(10) | Number prefix used |
 | txn_cash_amount | double | **Amount already paid/collected** |
 | txn_balance_amount | double | **Amount still outstanding** |
-| txn_total_amount | double | Gross before discounts and charges |
+| ~~txn_total_amount~~ | — | **DOES NOT EXIST** — column absent from live DB. Use `txn_cash_amount + txn_balance_amount` for net invoice total. |
 | txn_tax_amount | double | Total tax across all lines |
 | txn_discount_amount | double | Transaction-level discount |
 | txn_round_off_amount | double | Rounding applied to final total |
@@ -186,13 +250,26 @@ Always read `references/enums.md` first.
 | txn_firm_id | INTEGER | FK → kb_firms |
 | txn_po_date | date | PO date (on purchase transactions) |
 | txn_po_ref_number | varchar(50) | PO reference number |
+| txn_ac1_amount / txn_ac2_amount / txn_ac3_amount | double | Additional charge amounts (**NOTE: skill previously had wrong names `ac1_amount` etc. — correct names have `txn_` prefix**) |
 | ac1_name / ac2_name / ac3_name | varchar | Additional charge labels (e.g. "Freight") |
-| ac1_amount / ac2_amount / ac3_amount | double | Additional charge amounts |
+| ac1_sac_code / ac2_sac_code / ac3_sac_code | varchar | SAC codes for additional charges |
 | ac1_tax_id / ac2_tax_id / ac3_tax_id | INTEGER | FK → kb_tax_code for each charge |
 | ac1_tax_amount / ac2_tax_amount / ac3_tax_amount | double | Tax on each charge |
+| ac1_itc_applicable / ac2_itc_applicable / ac3_itc_applicable | INTEGER | ITC flag per charge |
 | loyalty_amount | double | Loyalty points redeemed as discount |
-
-**Amount identity**: `txn_cash_amount + txn_balance_amount` = net invoice value
+| txn_prefix_id | INTEGER | FK → kb_prefix.prefix_id — determines invoice prefix |
+| txn_category_id | INTEGER | FK → kb_item_categories (transaction-level category) |
+| txn_current_balance | double | Running balance snapshot |
+| txn_date_created | datetime | Record creation timestamp |
+| txn_date_modified | datetime | Record last modified timestamp |
+| txn_discount_percent | double | Transaction-level discount percentage |
+| txn_tax_percent | double | Transaction-level tax percentage |
+| txn_display_name | varchar(256) | Display name override |
+| mobile_no | varchar(20) | Customer mobile at time of transaction |
+| store_id | INTEGER | FK → stores (multi-store setups) |
+| icf_names | TEXT | Custom field names (JSON) |
+| latitude / longitude | double | GPS coordinates at time of sale |
+| created_by / updated_by | INTEGER | FK → urp_users |
 
 ---
 
@@ -220,10 +297,17 @@ lineitems — but those do not affect account balances.
 | lineitem_batch_number | varchar(30) | Batch tracking |
 | lineitem_expiry_date | datetime | Batch expiry |
 | lineitem_serial_number | varchar(30) | Serial number tracking |
-| lineitem_free_quantity | double | Free items on scheme (not charged) |
-| lineitem_description | varchar(1024) | Line-level note |
-| lineitem_additional_cess | double | Additional cess on this line |
-| lineitem_itc_applicable | INTEGER | ITC claimable on this line |
+| lineitem_is_serialized | INTEGER | 1 = this line is serial-tracked (use kb_serial_mapping) |
+| lineitem_ist_id | INTEGER | FK → kb_item_stock_tracking |
+| lineitem_size | varchar(100) | Size variant |
+| lineitem_count | INTEGER | Internal count field |
+| lineitem_manufacturing_date | datetime | Manufacturing date for batch items |
+| lineitem_total_amount_edited | INTEGER | 1 = total was manually overridden |
+| lineitem_ref_id | INTEGER | Reference to source lineitem (for returns/conversions) |
+| lineitem_txn_po_ref_number | varchar(50) | PO reference carried from source document |
+| lineitem_discount_type | INTEGER | 1=percentage, 2=flat amount |
+| lineitem_fa_cost_price | double | Fixed asset cost price |
+| icf_values | TEXT | Custom field values (JSON) |
 
 ---
 
@@ -274,6 +358,11 @@ Multiple rows per `txn_id` = split payment across methods.
 | txn_id | INTEGER | FK → kb_transactions |
 | amount | double | Amount via this payment method |
 | payment_reference | varchar | Cheque number / UTR |
+| edc_payment_status | varchar | EDC terminal payment status |
+| edc_payment_txnId | varchar | EDC terminal transaction ID |
+| edc_payment_mode | varchar | EDC payment mode (card type, etc.) |
+| edc_payment_initiationId | varchar | EDC initiation identifier |
+| edc_card_last_digits | varchar | Last 4 digits of card used at EDC terminal |
 
 ---
 
@@ -363,9 +452,54 @@ Query all: `SELECT * FROM other_accounts;`
 
 ---
 
+## kb_serial_details — Serial Number Registry
+
+**The authoritative serial/IMEI master table.** Every tracked unit (phone, appliance, TV) gets one row here when stock is received. `serial_current_quantity` = 1 means in stock, 0 means sold, -1 means over-sold.
+
+> ⚠️ `kb_lineitems.lineitem_serial_number` is present in the schema but is **always empty** in live data. Do NOT use it for serial tracking. The correct path is `kb_serial_details` → `kb_serial_mapping` → `kb_lineitems`.
+
+| Column | Type | Notes |
+|---|---|---|
+| serial_id | INTEGER PK | |
+| serial_item_id | INTEGER | FK → kb_items |
+| serial_number | varchar(256) | The IMEI / serial number string |
+| serial_current_quantity | double | 1=in stock, 0=sold, -1=over-sold |
+
+---
+
+## kb_serial_mapping — Serial ↔ Transaction Link
+
+Links each serial number to the lineitem (and therefore invoice) where it was sold or adjusted. A serial appears here twice when it is first received (via `serial_mapping_adj_id`) and again when sold (via `serial_mapping_lineitem_id`).
+
+| Column | Type | Notes |
+|---|---|---|
+| serial_mapping_id | INTEGER PK | |
+| serial_mapping_serial_id | INTEGER | FK → kb_serial_details.serial_id |
+| serial_mapping_lineitem_id | INTEGER | FK → kb_lineitems.lineitem_id — NULL if this is a stock adjustment row |
+| serial_mapping_adj_id | INTEGER | FK → kb_item_adjustments — NULL if this is a sale row |
+
+**Join pattern to get serial → sale invoice:**
+```sql
+SELECT sd.serial_number, t.txn_ref_number_char, t.txn_date,
+       ki.item_name, t.txn_cash_amount + t.txn_balance_amount AS invoice_total,
+       n.full_name AS party_name
+FROM kb_serial_details sd
+JOIN kb_serial_mapping sm ON sm.serial_mapping_serial_id = sd.serial_id
+JOIN kb_lineitems li      ON li.lineitem_id = sm.serial_mapping_lineitem_id
+JOIN kb_transactions t    ON t.txn_id = li.lineitem_txn_id
+JOIN kb_items ki          ON ki.item_id = li.item_id
+LEFT JOIN kb_names n      ON n.name_id = t.txn_name_id
+WHERE t.txn_type = 1
+  AND t.txn_status != 3
+  AND sm.serial_mapping_lineitem_id IS NOT NULL;
+```
+
+---
+
 ## kb_item_stock_tracking — Stock Lots / Batches
 
 Tracks batch/serial/lot-level stock for items with `item_type=1` (physical).
+**Note: In live FINETUNE backups this table is empty — serial tracking runs through `kb_serial_details` instead.**
 
 | Column | Type | Notes |
 |---|---|---|
@@ -386,10 +520,18 @@ Tracks batch/serial/lot-level stock for items with `item_type=1` (physical).
 Separate table from `kb_transactions`. Party-to-party transfers are NOT stored
 as `txn_type` rows — they have their own table.
 
-Query to find all transfers:
-```sql
-SELECT * FROM party_to_party_transfer;
-```
+| Column | Type | Notes |
+|---|---|---|
+| p_txn_id | INTEGER PK | Transfer ID |
+| p_amount | double | Transfer amount |
+| p_received_txn_id | INTEGER | FK → kb_transactions (receiving side) |
+| p_paid_txn_id | INTEGER | FK → kb_transactions (paying side) |
+| p_txn_date | date | Transfer date |
+| p_txn_description | varchar(1024) | Narration / notes |
+| p_txn_date_created | datetime | Record creation timestamp (default: CURRENT_TIMESTAMP) |
+| p_txn_date_modified | datetime | Record last modified (default: CURRENT_TIMESTAMP) |
+| p_txn_image_id | INTEGER | Attached image reference (default: null) |
+| p_txn_firm_id | INTEGER | FK → kb_firms (default: null) |
 
 ---
 

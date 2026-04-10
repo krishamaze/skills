@@ -2,7 +2,7 @@
 
 Agent Skills library — self-contained instruction sets for AI coding agents.
 
-Each skill is a folder under `skills/` with a `SKILL.md` (YAML frontmatter + markdown
+Each skill is a folder under `skills-lab/` with a `SKILL.md` (YAML frontmatter + markdown
 instructions) and optional `references/` for domain knowledge loaded on demand.
 
 ---
@@ -20,7 +20,7 @@ project or global scope, and 40+ agents including Claude Code, Cursor, Copilot, 
 
 ## Adding a skill
 
-1. Create `skills/your-skill-name/SKILL.md`:
+1. Create `skills-lab/your-skill-name/SKILL.md`:
 
 ```yaml
 ---

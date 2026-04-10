@@ -38,11 +38,12 @@ SELECT COUNT(*) FROM kb_transactions
 WHERE txn_type IN (1,2,21,23,60,61)
 AND (txn_place_of_supply IS NULL OR txn_place_of_supply = '');
 
--- 7. Transactions where cash + balance doesn't match total
-SELECT txn_id, txn_cash_amount, txn_balance_amount, txn_total_amount
+-- 7. Sanity check: cash + balance should be positive on financial txns
+SELECT txn_id, txn_cash_amount, txn_balance_amount
 FROM kb_transactions
-WHERE ABS((txn_cash_amount + txn_balance_amount) - txn_total_amount) > 1
-AND txn_type IN (1,2,21,23);
+WHERE (txn_cash_amount + txn_balance_amount) <= 0
+AND txn_type IN (1,2,21,23,60,61)
+AND txn_status != 3;
 
 -- 8. Date range of all transactions (for fiscal year coverage)
 SELECT MIN(txn_date), MAX(txn_date) FROM kb_transactions;
@@ -61,18 +62,17 @@ SELECT name_is_active, COUNT(*) FROM kb_names GROUP BY name_is_active;
 ```
 txn_cash_amount       — amount already collected/paid at time of entry
 txn_balance_amount    — amount still outstanding
-txn_total_amount      — gross before additional charges and discounts
 txn_tax_amount        — total tax across all lines
 txn_discount_amount   — transaction-level discount (not line-level)
 txn_round_off_amount  — rounding applied to final total
-ac1_amount / ac2_amount / ac3_amount — additional charges (freight, packing, etc.)
+txn_ac1_amount / txn_ac2_amount / txn_ac3_amount — additional charges (freight, packing, etc.)
 ```
 
 **Invoice net total = `txn_cash_amount + txn_balance_amount`**
 
 Full gross reconstruction:
 ```
-SUM(lineitem_total_amount)
+SUM(total_amount)
 + txn_ac1_amount + txn_ac2_amount + txn_ac3_amount
 + txn_tax_amount
 - txn_discount_amount
@@ -114,7 +114,7 @@ WHERE tax_code_id = <lineitem_tax_id>;
 ## Additional Charges
 
 `ac1_name`, `ac2_name`, `ac3_name` — free-text labels (e.g., "Freight", "Packing")
-`ac1_amount`, `ac2_amount`, `ac3_amount` — the charge values
+`txn_ac1_amount`, `txn_ac2_amount`, `txn_ac3_amount` — the charge values
 `ac1_tax_id`, `ac2_tax_id`, `ac3_tax_id` — optional tax on each charge
 
 These are invoice-level, not line-level. Any non-zero charge must be handled
@@ -182,16 +182,17 @@ Multiple rows for the same `txn_id` = split payment (e.g. part Cash, part UPI).
 
 **`kb_txn_links` — optional invoice ↔ payment link:**
 ```sql
-SELECT * FROM kb_txn_links WHERE link_source_txn_id = <payment_txn_id>;
--- link_destination_txn_id = the invoice being settled
+SELECT * FROM kb_txn_links WHERE txn_links_txn_1_id = <payment_txn_id>;
+-- txn_links_txn_2_id = the invoice being settled
+-- txn_links_amount = amount applied from txn_1 to settle txn_2
 ```
 This link is controlled by a user toggle in settings. Its absence does NOT mean
 the payment is unrelated to an invoice — it means the user didn't link it.
 
 **`kb_linked_transactions` — document conversion trail:**
 ```sql
-SELECT * FROM kb_linked_transactions WHERE source_txn_id = <estimate_txn_id>;
--- destination_txn_id = the invoice created from this estimate/order
+SELECT * FROM kb_linked_transactions WHERE txn_source_id = <estimate_txn_id>;
+-- txn_destination_id = the invoice created from this estimate/order
 ```
 
 ---
@@ -244,14 +245,78 @@ Always check the full date range before processing:
 SELECT MIN(txn_date), MAX(txn_date) FROM kb_transactions;
 ```
 
-`txn_date` is stored as a Unix timestamp (milliseconds) in some versions,
-and as `YYYY-MM-DD` text in others. Verify the format:
+**Vyapar 5.x (modern):** `txn_date` is stored as a datetime string (`YYYY-MM-DD HH:MM:SS`).
+Older versions may use Unix timestamps (milliseconds). Always verify:
 
 ```sql
 SELECT txn_date FROM kb_transactions LIMIT 5;
 ```
 
-If numeric and >1000000000000: divide by 1000 to get Unix seconds.
+If the value looks like `2025-04-01 00:00:00` → datetime string (5.x, most common).
+If numeric and >1000000000000 → Unix milliseconds (legacy), divide by 1000 to get seconds.
+
+---
+
+## Serial Tracking Reliability
+
+### `serial_item_id` is NOT a reliable source of truth for "what item was this IMEI sold as"
+
+`kb_serial_details.serial_item_id` is written at the time of sale and is **never updated** by Vyapar when an item is renamed or when serial records are inherited by a reused item slot. It will point to the wrong item in two confirmed real-world scenarios:
+
+**Scenario 1 — Item rename/reuse workflow:**
+Vyapar blocks deletion of any item that has rows in `kb_serial_details`, even if those serials have no active transactions. Users work around this by renaming the stale item (e.g., to `dlt`) and later reusing that slot for a new item. When this happens, `serial_item_id` continues to reference the old item name through all renames — it is never corrected by the app.
+
+**Scenario 2 — Data entry error:**
+The wrong item was selected in Vyapar UI at time of sale. `serial_item_id` reflects the mistake; `kb_lineitems.item_id` may reflect a manual correction made afterward.
+
+**Correct approach — always use the mapping chain:**
+```sql
+-- Authoritative: what item was this IMEI actually sold as?
+SELECT ki.item_name
+FROM kb_serial_details sd
+JOIN kb_serial_mapping sm ON sm.serial_mapping_serial_id = sd.serial_id
+JOIN kb_lineitems li ON li.lineitem_id = sm.serial_mapping_lineitem_id
+JOIN kb_items ki ON ki.item_id = li.item_id
+WHERE sd.serial_number = '<IMEI>';
+```
+
+**Audit query — find all mismatches in the DB:**
+```sql
+SELECT sd.serial_number,
+       ki_sd.item_name AS serial_details_item,
+       ki_li.item_name AS lineitem_item
+FROM kb_serial_details sd
+JOIN kb_items ki_sd ON ki_sd.item_id = sd.serial_item_id
+LEFT JOIN kb_serial_mapping sm ON sm.serial_mapping_serial_id = sd.serial_id
+LEFT JOIN kb_lineitems li ON li.lineitem_id = sm.serial_mapping_lineitem_id
+LEFT JOIN kb_items ki_li ON ki_li.item_id = li.item_id
+WHERE ki_li.item_id IS NOT NULL
+  AND sd.serial_item_id != li.item_id;
+```
+
+### Vyapar deletion guard — shallow check (app bug)
+
+Vyapar's item deletion guard checks for the existence of any row in `kb_serial_details` where `serial_item_id` matches the item being deleted. It does **not** join through `kb_serial_mapping → kb_lineitems` to verify the sale actually belongs to that item. This means:
+
+- An item with zero actual transactions can still be undeletable if stale `serial_item_id` references exist
+- The fix is to update `serial_item_id` on the orphaned rows to point to the correct item (determined via the mapping chain above), after which Vyapar will allow deletion
+
+### Orphaned serials — no mapping at all
+
+Serials in `kb_serial_details` with no corresponding row in `kb_serial_mapping` are either:
+- Stock received but not yet sold (legitimate)
+- Sales where the mapping row was never written (Vyapar bug)
+
+```sql
+-- Find all unmapped serials
+SELECT sd.serial_number, ki.item_name
+FROM kb_serial_details sd
+JOIN kb_items ki ON ki.item_id = sd.serial_item_id
+LEFT JOIN kb_serial_mapping sm ON sm.serial_mapping_serial_id = sd.serial_id
+WHERE sm.serial_mapping_serial_id IS NULL;
+```
+
+Cross-reference against `kb_lineitems` to distinguish the two cases before acting.
 
 ---
 
