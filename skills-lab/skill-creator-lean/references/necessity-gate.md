@@ -38,6 +38,11 @@ Every `.md` file is a node. Pointers are edges. Together they form a navigable k
 
 Before writing a constraint in CAPS (ALWAYS/NEVER), ask if you can explain *why* instead. Explaining why produces more robust generalization and a leaner skill.
 
+## 200-Line Rule
+
+Any `.md` file approaching 200 lines gets indexed.
+[READ] references/indexing-mechanic.md — WHEN any file approaches 200 lines or needs splitting
+
 ## Orphan Check
 
 After writing all pointers, verify every file in `references/` and `agents/` has at least one incoming `[READ]`, `[RUN]`, or `[SPAWN]` pointer pointing to it.
