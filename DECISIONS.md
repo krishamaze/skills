@@ -114,3 +114,17 @@
 **Why:** The wrapper was recently stabilized with critical rate limiting and approval logic. Adding async state tracking or autonomous RPC calls introduces significant complexity. The Rust app-server already handles its own compaction internally if requested. The Node wrapper should remain a thin, stable passthrough layer.
 **Do not:** Add background file monitoring, autonomous thread hydration, or side-effect loop tasks into the MCP node wrapper.
 **Failure mode:** Race conditions with thread state tracking, stalled JSON-RPC streams, and regressions in connection stability.
+
+## ADR-018: Source skills live in `skills-lab/`, not `skills/`
+**Status:** active
+**Decision:** Renamed the source directory from `skills/` to `skills-lab/` to separate skill source code from `npx skills` install artifacts.
+**Why:** When working inside the skills repo, `npx skills remove` scanned all `SKILL.md` files — including the source `skills/` directory — and listed source files as removable. This meant you could accidentally delete your own source. The rename puts source outside the install tool's local scan paths while `npx skills add` still discovers them from the remote (it scans recursively for `SKILL.md` files, not just `skills/`).
+**Do not:** Rename back to `skills/` or create a `skills/` directory for source. The name `skills-lab/` is the source convention for this repo.
+**Failure mode:** Source files detected as installed skills by `npx skills remove`, leading to accidental deletion.
+
+## ADR-019: Unified agent config via AGENT.md with symlinks
+**Status:** active
+**Decision:** `AGENT.md` is the single source of truth for agent instructions. `CLAUDE.md` and `GEMINI.md` are relative symlinks to `AGENT.md`.
+**Why:** Multiple agents read different config files (`CLAUDE.md` for Claude Code, `GEMINI.md` for Gemini CLI). A single source with symlinks ensures all agents get identical instructions without content drift.
+**Do not:** Edit `CLAUDE.md` or `GEMINI.md` directly — they are symlinks. Edit `AGENT.md` instead. Do not use absolute-path symlinks — they break on clone.
+**Failure mode:** Agent-specific configs drift apart, causing inconsistent behavior across agents.

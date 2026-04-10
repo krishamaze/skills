@@ -91,3 +91,8 @@
 **Never:** Manually write, copy, or edit files under `.agents/skills/`, `.claude/skills/`, or any install directory managed by `npx skills add`.
 **Why:** These directories are install artifacts, not source. They sync only through the remote publish/install cycle (`edit source → commit → push → npx skills add krishamaze/skills`). Manual edits diverge them from the publish pipeline, get silently overwritten on next install, and bypass any packaging/validation `skills.sh` performs.
 **Instead:** Edit only under `skills/<name>/` (the source of truth). Commit, push, and let consumers run `npx skills add` to update their install copies.
+
+### source directory naming (supersedes `skills/` references above)
+**Never:** Use `skills/` as the source directory name in this repo, or rename `skills-lab/` back to `skills/`.
+**Why:** `npx skills remove` scans for `SKILL.md` files in `skills/` and agent install directories (`.claude/skills/`, `.agents/skills/`). When source lived in `skills/`, running `npx skills remove` in the repo listed source files as removable — risking accidental deletion of source code.
+**Instead:** Source lives in `skills-lab/`. `npx skills add` discovers skills recursively by `SKILL.md`, so the directory name doesn't affect remote installation. All older references to `skills/<name>/` in DECISIONS.md and STACK.md should be read as `skills-lab/<name>/`.
